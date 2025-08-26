@@ -3,6 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
+import { createServer } from 'http';
+import WebSocket, { WebSocketServer } from 'ws';
 
 import { router as bonsaleRouter } from './routes/bonsale';
 import projectOutboundRouter from './routes/projectOutbound';
@@ -53,10 +55,34 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 });
 
 // Start server
-app.listen(PORT, () => {
+const httpServer = createServer(app);
+
+// 建立 WebSocket 服務器
+const wss = new WebSocketServer({ server: httpServer });
+
+wss.on('connection', (ws) => {
+  console.log('🔌 WebSocket client connected');
+
+  ws.on('message', (message) => {
+    console.log('💬 Received:', message.toString());
+    // 廣播給所有連線中的 client
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message.toString());
+      }
+    });
+  });
+
+  ws.on('close', () => {
+    console.log('👋 WebSocket client disconnected');
+  });
+});
+
+httpServer.listen(PORT, () => {
   console.log(`🚀 Server is running on port ${PORT}`);
   console.log(`📍 Check: http://localhost:${PORT}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔌 WebSocket server is running at ws://localhost:${PORT}`);
 });
 
 export default app;

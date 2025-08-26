@@ -1,6 +1,6 @@
 // import InfoOutlineIcon from '@mui/icons-material/InfoOutline';
 // import { useNavigate } from 'react-router-dom'
-import { Fragment, useRef, useState } from 'react';
+import { Fragment, useRef, useState, useEffect } from 'react';
 import { 
   Table,
   TableBody,
@@ -15,7 +15,8 @@ import {
   Button,
   LinearProgress,
   Alert,
-  CircularProgress
+  CircularProgress,
+  TextField
 } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import InfoOutlineIcon from '@mui/icons-material/InfoOutline';
@@ -24,24 +25,58 @@ import GlobalSnackbar, { type GlobalSnackbarRef } from '../components/GlobalSnac
 import ProjectCustomersDialog from '../components/ProjectCustomersDialog';
 
 import useProjectOutboundData from '../hooks/useProjectOutboundData';
-// import usePostOutbound from '../hooks/api/usePostOutbound';
-// import usePatchOutbound from '../hooks/api/usePatchOutbound';
+
 import useUpdateBonsaleProject from '../hooks/api/useUpdateBonsaleProject';
-// import useDeleteOutbound from '../hooks/api/useDeleteOutbound';
-
-// import useConnectWebSocket from '../hooks/useConnectWebSocket';
-// import useConnectBonsaleWebHookWebSocket from '../hooks/useConnectBonsaleWebHookWebSocket';
-// import useTemporaryDisable from '../hooks/useTemporaryDisable';
-// import useGetIsProjectErrorAutoRestart from '../hooks/api/useGetIsProjectErrorAutoRestart';
-// import usePutIsProjectErrorAutoRestart from '../hooks/api/usePutIsProjectErrorAutoRestart';
-
-// import { mainActionType } from '../utils/mainActionType';
 
 export default function Home() {
+  // WebSocket 狀態
+  const [wsStatus, setWsStatus] = useState<'connecting'|'open'|'closed'|'error'>('connecting');
+  const [wsMessage, setWsMessage] = useState<string>('');
+  const [inputMessage, setInputMessage] = useState<string>('');
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // 發送訊息
+  const sendMessage = () => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && inputMessage.trim()) {
+      wsRef.current.send(inputMessage);
+      setInputMessage('');
+    }
+  };
+
+  // 連線 WebSocket
+  // 注意：正式環境請改成後端 ws 服務實際網址
+  const WS_URL = 'ws://localhost:4020';
+
+  // 只在元件掛載時執行一次
+  useEffect(() => {
+    const ws = new WebSocket(WS_URL);
+    wsRef.current = ws;
+    setWsStatus('connecting');
+
+    ws.onopen = () => {
+      setWsStatus('open');
+      console.log('WebSocket 連線成功');
+    };
+    ws.onmessage = (event) => {
+      setWsMessage(event.data);
+      console.log('收到 WebSocket 訊息:', event.data);
+    };
+    ws.onerror = (error) => {
+      setWsStatus('error');
+      console.error('WebSocket 錯誤:', error);
+    };
+    ws.onclose = () => {
+      setWsStatus('closed');
+      console.log('WebSocket 連線關閉');
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, []);
+
   // 引入 自定義 API Hook
   const { updateProject } = useUpdateBonsaleProject();
-
-  // const { disabledMap, triggerDisable } = useTemporaryDisable<string>(1000);
   
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null); // 用於跟踪當前展開的專案 ID
 
@@ -116,6 +151,25 @@ export default function Home() {
     
   return (
     <>
+      {/* WebSocket 狀態顯示 */}
+      <Alert severity={wsStatus === 'open' ? 'success' : wsStatus === 'error' ? 'error' : 'info'} sx={{ mb: 2 }}>
+        WebSocket 狀態：{wsStatus}
+        {wsMessage && <Box sx={{ mt: 1 }}>收到訊息：{wsMessage}</Box>}
+        {wsStatus === 'open' && (
+          <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+            <TextField
+              size="small"
+              placeholder="輸入訊息"
+              value={inputMessage}
+              onChange={(e) => setInputMessage(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+            />
+            <Button size="small" variant="contained" onClick={sendMessage}>
+              發送
+            </Button>
+          </Stack>
+        )}
+      </Alert>
       <GlobalSnackbar ref={snackbarRef} />
       <Stack 
         direction='row'
