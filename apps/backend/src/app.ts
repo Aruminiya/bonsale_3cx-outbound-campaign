@@ -58,22 +58,22 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 const httpServer = createServer(app);
 
 // 建立 WebSocket 服務器
-const wss = new WebSocketServer({ server: httpServer });
+const ws = new WebSocketServer({ server: httpServer });
 
-wss.on('connection', (ws) => {
+ws.on('connection', (prams) => {
   console.log('🔌 WebSocket client connected');
 
-  ws.on('message', (message) => {
+  prams.on('message', (message) => {
     console.log('💬 Received:', message.toString());
     // 廣播給所有連線中的 client
-    wss.clients.forEach((client) => {
+    ws.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(message.toString());
       }
     });
   });
 
-  ws.on('close', () => {
+  prams.on('close', () => {
     console.log('👋 WebSocket client disconnected');
   });
 });
