@@ -9,6 +9,8 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { router as bonsaleRouter } from './routes/bonsale';
 import projectOutboundRouter from './routes/projectOutbound';
 
+import { logWithTimestamp, warnWithTimestamp } from './util/timestamp';
+
 // Load environment variables
 dotenv.config();
 
@@ -60,10 +62,25 @@ const httpServer = createServer(app);
 // 建立 WebSocket 服務器
 const ws = new WebSocketServer({ server: httpServer });
 
-ws.on('connection', (prams) => {
+ws.on('connection', (wsClient) => {
   console.log('🔌 WebSocket client connected');
 
-  prams.on('message', (message) => {
+  wsClient.on('message', (message) => {
+    const { event, project } = JSON.parse(message.toString());
+
+    switch (event) {
+      case 'startOutbound':
+        // 處理開始外撥事件
+        logWithTimestamp('開始 外撥事件:', project);
+        break;
+      case 'stopOutbound':
+        // 處理停止外撥事件
+        logWithTimestamp('停止 外撥事件:', project);
+        break;
+      default:
+        warnWithTimestamp('未知事件:', event);
+    }
+
     console.log('💬 Received:', message.toString());
     // 廣播給所有連線中的 client
     ws.clients.forEach((client) => {
@@ -73,7 +90,7 @@ ws.on('connection', (prams) => {
     });
   });
 
-  prams.on('close', () => {
+  wsClient.on('close', () => {
     console.log('👋 WebSocket client disconnected');
   });
 });

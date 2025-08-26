@@ -16,7 +16,6 @@ import {
   LinearProgress,
   Alert,
   CircularProgress,
-  TextField
 } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import InfoOutlineIcon from '@mui/icons-material/InfoOutline';
@@ -28,18 +27,28 @@ import useProjectOutboundData from '../hooks/useProjectOutboundData';
 
 import useUpdateBonsaleProject from '../hooks/api/useUpdateBonsaleProject';
 
+type SendMessagePayload = {
+  event: string;
+  project: {
+    callFlowId: string;
+    projectId: string;
+    action: string;
+    error: string | null;
+  };
+};
+
 export default function Home() {
   // WebSocket 狀態
   const [wsStatus, setWsStatus] = useState<'connecting'|'open'|'closed'|'error'>('connecting');
   const [wsMessage, setWsMessage] = useState<string>('');
-  const [inputMessage, setInputMessage] = useState<string>('');
   const wsRef = useRef<WebSocket | null>(null);
 
-  // 發送訊息
-  const sendMessage = () => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && inputMessage.trim()) {
-      wsRef.current.send(inputMessage);
-      setInputMessage('');
+  // 發送 WS 訊息
+  const sendMessage = (message: SendMessagePayload) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(message));
+    } else {
+      console.warn('WebSocket is not open or message is empty');
     }
   };
 
@@ -103,8 +112,19 @@ export default function Home() {
   };
  
   // 開始撥打電話
-  const handleStartOutbound = () => {
+  const handleStartOutbound = (project: ProjectOutboundDataType) => {
+    const message = {
+      event: 'startOutbound',
+      project: {
+        callFlowId: project.callFlowId,
+        // customerId: project.customerId,
+        projectId: project.projectId,
+        action: 'init',
+        error: null
+      }
+    }
 
+    sendMessage(message);
   };
 
   // 暫停撥打電話
@@ -157,15 +177,8 @@ export default function Home() {
         {wsMessage && <Box sx={{ mt: 1 }}>收到訊息：{wsMessage}</Box>}
         {wsStatus === 'open' && (
           <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-            <TextField
-              size="small"
-              placeholder="輸入訊息"
-              value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-            />
-            <Button size="small" variant="contained" onClick={sendMessage}>
-              發送
+            <Button size="small" variant="contained" onClick={() => sendMessage('測試訊息發送')}>
+              測試訊息發送
             </Button>
           </Stack>
         )}
@@ -305,8 +318,8 @@ export default function Home() {
                     <TableCell align='center'>
                       <Stack direction='row'>
                         <IconButton 
-                            onClick={() => handleStartOutbound()}
-                          >
+                          onClick={() => handleStartOutbound(item)}
+                        >
                           <PlayArrowIcon />
                         </IconButton>
                         <IconButton 
