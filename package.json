@@ -20,7 +20,7 @@
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx}": [
-      "pnpm lint:fix",
+      "pnpm lint",
       "pnpm type-check"
     ]
   },
