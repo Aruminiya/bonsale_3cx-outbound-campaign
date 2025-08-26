@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import dotenv from 'dotenv';
 
 import { router as bonsaleRouter } from './routes/bonsale';
+import projectOutboundRouter from './routes/projectOutbound';
 
 // Load environment variables
 dotenv.config();
