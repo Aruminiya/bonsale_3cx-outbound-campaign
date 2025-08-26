@@ -20,10 +20,9 @@ app.use(express.json({ limit: '10mb' })); // Parse JSON bodies
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 
 // API Routes
-const apiRouter = express.Router();
-
 // Mount API routes
 app.use('/api/bonsale', bonsaleRouter);
+app.use('/api/project-outbound', projectOutboundRouter);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -42,7 +41,7 @@ app.use('*', (req, res) => {
 });
 
 // Error handling middleware
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Error:', err);
   
   res.status(err.status || 500).json({

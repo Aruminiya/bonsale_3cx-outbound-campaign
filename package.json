@@ -20,8 +20,8 @@
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx}": [
-      "pnpm lint",
-      "pnpm type-check"
+      "turbo run lint",
+      "turbo run type-check"
     ]
   },
   "devDependencies": {
