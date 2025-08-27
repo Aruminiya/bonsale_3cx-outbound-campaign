@@ -11,15 +11,12 @@ export interface ApiResponse<T> {
   data: T;
 }
 
-export interface ApiError {
+export interface ApiError<E> {
   success: false;
-  error: {
-    status?: number;
-    message: string;
-  };
+  error: E;
 }
 
-export type ApiResult<T> = ApiResponse<T> | ApiError;
+export type ApiResult<T, E = { errorCode: string; error: string }> = ApiResponse<T> | ApiError<E>;
 
 export type GetOutboundApiResult = ApiResult<GetOutbound>;
 export type PutCallStatusApiResult = ApiResult<PutCallStatus>;

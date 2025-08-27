@@ -172,14 +172,18 @@ export default function Home() {
   return (
     <>
       {/* WebSocket 狀態顯示 */}
-      <Alert severity={wsStatus === 'open' ? 'success' : wsStatus === 'error' ? 'error' : 'info'} sx={{ mb: 2 }}>
+      <Alert 
+        severity={wsStatus === 'open' ? 'success' : wsStatus === 'closed' ? 'error' : 'info'}
+        sx={{ mb: 2 }}
+      >
         WebSocket 狀態：{wsStatus}
         {wsMessage && <Box sx={{ mt: 1 }}>收到訊息：{wsMessage}</Box>}
         {wsStatus === 'open' && (
           <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-            <Button size="small" variant="contained" onClick={() => sendMessage('測試訊息發送')}>
+            
+            {/* <Button size="small" variant="contained" onClick={() => sendMessage('測試訊息發送')}>
               測試訊息發送
-            </Button>
+            </Button> */}
           </Stack>
         )}
       </Alert>

@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import dotenv from 'dotenv';
 import { 
   GetOutboundApiResult,
@@ -40,9 +40,16 @@ async function getOutbound(
     const outboundResult = await axiosBonsaleInstance.get(`${host}/outbound?${queryString}`);
     const outboundProject = outboundResult.data;
     return { success: true, data: outboundProject }; // 返回成功
-  } catch (error: any) {
-    console.error('Error getOutbound request:', error.message);
-    return { success: false, error: { status: error.status, message: `Error getOutbound request: ${error.message}` } }; // 返回錯誤
+  } catch (error: unknown) {
+    const axiosError = error as AxiosError;
+    console.error('Error getOutbound request:', axiosError.message);
+    return { 
+      success: false, 
+      error: {
+        errorCode: axiosError.response?.status?.toString() || '500',
+        error: `Error getOutbound request: ${axiosError.message}`
+      }
+    };
   }
 }
 
@@ -54,9 +61,16 @@ async function updateCallStatus(
   try {
     const response = await axiosBonsaleInstance.put(`${host}/project/${projectId}/customer/${customerId}/callStatus`, { callStatus });
     return { success: true, data: response.data }; // 返回成功
-  } catch (error: any) {
-    console.error('Error updateCallStatus request:', error.message);
-    return { success: false, error: { status: error.status, message: `Error updateCallStatus request: ${error.message}` } }; // 返回錯誤
+  } catch (error: unknown) {
+    const axiosError = error as AxiosError;
+    console.error('Error updateCallStatus request:', axiosError.message);
+    return { 
+      success: false, 
+      error: {
+        errorCode: axiosError.response?.status?.toString() || '500',
+        error: `Error updateCallStatus request: ${axiosError.message}`
+      }
+    };
   }
 }
 
@@ -67,9 +81,16 @@ async function updateBonsaleProjectAutoDialExecute(
   try {
     const response = await axiosBonsaleInstance.put(`${host}/project/${projectId}/auto-dial/${callFlowId}/execute`, {});
     return { success: true, data: response.data }; // 返回成功
-  } catch (error: any) {
-    console.error('Error updateBonsaleProjectAutoDialExecute request:', error.message);
-    return { success: false, error: { status: error.status, message: `Error updateBonsaleProjectAutoDialExecute request: ${error.message}` } }; // 返回錯誤
+  } catch (error: unknown) {
+    const axiosError = error as AxiosError;
+    console.error('Error updateBonsaleProjectAutoDialExecute request:', axiosError.message);
+    return { 
+      success: false, 
+      error: {
+        errorCode: axiosError.response?.status?.toString() || '500',
+        error: `Error updateBonsaleProjectAutoDialExecute request: ${axiosError.message}`
+      }
+    };
   }
 }
 
@@ -80,9 +101,16 @@ async function updateDialUpdate(
   try {
     const response = await axiosBonsaleInstance.put(`${host}/project/${projectId}/customer/${customerId}/dialUpdate`, {});
     return { success: true, data: response.data }; // 返回成功
-  } catch (error: any) {
-    console.error('Error updateDialUpdate request:', error.message);
-    return { success: false, error: { status: error.status, message: `Error updateDialUpdate request: ${error.message}` } }; // 返回錯誤
+  } catch (error: unknown) {
+    const axiosError = error as AxiosError;
+    console.error('Error updateDialUpdate request:', axiosError.message);
+    return { 
+      success: false, 
+      error: {
+        errorCode: axiosError.response?.status?.toString() || '500',
+        error: `Error updateDialUpdate request: ${axiosError.message}`
+      }
+    };
   }
 }
 
@@ -107,9 +135,16 @@ async function updateVisitRecord(
     };
     const response = await axios.post(`${host}/project/customer/visit`, payload);
     return { success: true, data: response.data }; // 返回成功
-  } catch (error: any) {
-    console.error('Error updateVisitRecord request:', error.message);
-    return { success: false, error: { status: error.status, message: `Error updateVisitRecord request: ${error.message}` } }; // 返回錯誤
+  } catch (error: unknown) {
+    const axiosError = error as AxiosError;
+    console.error('Error updateVisitRecord request:', axiosError.message);
+    return { 
+      success: false, 
+      error: {
+        errorCode: axiosError.response?.status?.toString() || '500',
+        error: `Error updateVisitRecord request: ${axiosError.message}`
+      }
+    };
   }
 }
 
@@ -119,15 +154,22 @@ async function getBonsaleConfig(
   try {
     const response = await axiosBonsaleInstance.get(`${host}/config/${configName}`);
     return { success: true, data: response.data }; // 返回成功
-  } catch (error: any) {
-    console.error('Error getBonsaleConfig request:', error.message);
-    return { success: false, error: { status: error.status, message: `Error getBonsaleConfig request: ${error.message}` } }; // 返回錯誤
+  } catch (error: unknown) {
+    const axiosError = error as AxiosError;
+    console.error('Error getBonsaleConfig request:', axiosError.message);
+    return { 
+      success: false, 
+      error: {
+        errorCode: axiosError.response?.status?.toString() || '500',
+        error: `Error getBonsaleConfig request: ${axiosError.message}`
+      }
+    };
   }
 }
 
 async function updateBonsaleConfig(
   configName: string,
-  configData: any
+  configData: unknown
 ): Promise<PutBonsaleConfigApiResult> {
   try {
     const response = await axiosBonsaleInstance.put(`${host}/config/${configName}`, {
@@ -136,9 +178,16 @@ async function updateBonsaleConfig(
       description: '專案自動外播-執行專案暫存',
     });
     return { success: true, data: response.data }; // 返回成功
-  } catch (error: any) {
-    console.error('Error updateBonsaleConfig request:', error.message);
-    return { success: false, error: { status: error.status, message: `Error updateBonsaleConfig request: ${error.message}` } }; // 返回錯誤
+  } catch (error: unknown) {
+    const axiosError = error as AxiosError;
+    console.error('Error updateBonsaleConfig request:', axiosError.message);
+    return { 
+      success: false, 
+      error: {
+        errorCode: axiosError.response?.status?.toString() || '500',
+        error: `Error updateBonsaleConfig request: ${axiosError.message}`
+      }
+    };
   }
 }
 
