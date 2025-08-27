@@ -8,6 +8,8 @@
   },
   "scripts": {
     "dev": "turbo run dev",
+    "backend": "cd apps/backend && pnpm run dev",
+    "frontend": "cd apps/frontend && pnpm run dev",
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",
