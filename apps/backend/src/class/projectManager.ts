@@ -21,6 +21,7 @@ export class ProjectManager {
         action: project.action,
         error: project.error || '',
         access_token: project.access_token || '',
+        caller: project.caller ? JSON.stringify(project.caller) : '',
         agentQuantity: project.agentQuantity.toString(),
         // ws_3cx 不儲存，因為 WebSocket 無法序列化
         createdAt: new Date().toISOString(),
@@ -62,6 +63,7 @@ export class ProjectManager {
         projectData.action as 'init' | 'active',
         projectData.error || null,
         projectData.access_token || null,
+        projectData.caller ? JSON.parse(projectData.caller) : null,
         projectData.agentQuantity ? parseInt(projectData.agentQuantity) : 0,
         // ws_3cx 無法從 Redis 重建，需在應用程式中重新建立
       );

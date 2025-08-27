@@ -80,7 +80,22 @@ async function initOutboundProject(projectData: ProjectData) {
   // 檢查專案是否已存在
   const existingProject = await ProjectManager.getProject(projectId);
   if (existingProject) {
-    logWithTimestamp(`專案 ${projectId} 已存在，返回現有實例`);
+    logWithTimestamp(`專案 ${projectId} 已存在，更新 token 並返回實例`);
+    
+    // 更新 access token（因為可能已過期）
+    const token = await get3cxToken(client_id, client_secret);
+    const { access_token } = token.data;
+    if (!access_token) {
+      throw new Error('Failed to obtain access token');
+    }
+    
+    // 更新專案實例的 token
+    existingProject.access_token = access_token;
+    
+    // 更新 Redis 中的 token
+    await ProjectManager.updateProjectAccessToken(projectId, access_token);
+    
+    logWithTimestamp(`專案 ${projectId} token 已更新`);
     return existingProject;
   }
 
@@ -94,6 +109,7 @@ async function initOutboundProject(projectData: ProjectData) {
   if (!caller.success) {
     throw new Error('Failed to obtain caller information');
   }
+  const callerData = caller.data;
   const agentQuantity = caller.data.length;
 
   const project = new Project(
@@ -104,6 +120,7 @@ async function initOutboundProject(projectData: ProjectData) {
     'init',
     null,
     access_token,
+    callerData,
     agentQuantity
   );
 

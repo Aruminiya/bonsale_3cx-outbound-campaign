@@ -13,6 +13,17 @@ if (!WS_HOST_3CX) {
   console.warn('警告: WS_HOST_3CX 環境變數未設定');
 }
 
+type Caller = {
+  dn: string;
+  type: string;
+  devices: Array<{
+    dn: string;
+    device_id: string;
+    user_agent: string;
+  }>;
+  participants: Array<unknown>;
+}
+
 export default class Project {
   grant_type: string;
   client_id: string;
@@ -22,6 +33,7 @@ export default class Project {
   action: 'init' | 'active';
   error: string | null;
   access_token: string | null;
+  caller: Caller | null;
   agentQuantity: number | 0;
   ws_3cx: WebSocket | null;
 
@@ -33,6 +45,7 @@ export default class Project {
     action: 'init' | 'active',
     error: string | null = null,
     access_token: string | null = null,
+    caller: Caller | null = null,
     agentQuantity: number | 0,
     ws_3cx: WebSocket | null = null
   ) {
@@ -44,6 +57,7 @@ export default class Project {
     this.action = action;
     this.error = error;
     this.access_token = access_token;
+    this.caller = caller;
     this.agentQuantity = agentQuantity;
     this.ws_3cx = ws_3cx;
   }
