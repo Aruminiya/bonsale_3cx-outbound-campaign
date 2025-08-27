@@ -93,7 +93,7 @@ export async function hangupCall(token: string, dn: string, id: string) {
 }
 
 // 獲取撥打者資訊
-export async function getCaller(token: string, type = 'Wqueue') {
+export async function getCaller(token: string, type: 'Wqueue' | 'Wextension' | 'Wroutepoint' = 'Wextension') {
   try {
     const response = await axios.get(`${host}/callcontrol`, {
       headers: {
@@ -101,8 +101,8 @@ export async function getCaller(token: string, type = 'Wqueue') {
       },
     });
 
-    const caller = response.data.find((item: { type: string }) => item.type === type);
-    if (!caller) {
+    const caller = response.data.filter((item: { type: string }) => item.type === type);
+    if (!caller || caller.length === 0) {
       return {
         success: false,
         error: { 

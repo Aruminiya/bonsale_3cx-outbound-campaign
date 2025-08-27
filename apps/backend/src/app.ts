@@ -4,7 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
-import WebSocket, { WebSocketServer } from 'ws';
+import { WebSocketServer } from 'ws';
 
 import { router as bonsaleRouter } from './routes/bonsale';
 
@@ -59,9 +59,19 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 const httpServer = createServer(app);
 
 
+// TODO 功能實作區
 // 這邊實作 startOutbound 的功能 之後要搬到其他檔案歸類
-async function initOutboundProject(projectData: any) {
-  // 步驟一: 建立專案並抓 3CX token
+// =================================================================
+
+type ProjectData = {
+  projectId: string;
+  callFlowId: string;
+  client_id: string;
+  client_secret: string;
+};
+
+// 初始化專案
+async function initOutboundProject(projectData: ProjectData) {
   const { projectId, callFlowId, client_id, client_secret } = projectData;
 
   const token = await get3cxToken(client_id, client_secret);
@@ -75,10 +85,13 @@ async function initOutboundProject(projectData: any) {
     null,
     token.data.access_token
   );
-  logWithTimestamp('Initialized Project:', project);
+  // logWithTimestamp('Initialized Project:', project);
   return project;
 }
 
+
+
+// =================================================================
 
 // 建立 WebSocket 服務器
 const ws = new WebSocketServer({ server: httpServer });
@@ -86,18 +99,16 @@ const ws = new WebSocketServer({ server: httpServer });
 ws.on('connection', (wsClient) => {
   logWithTimestamp('🔌 WebSocket client connected');
 
-wsClient.on('message', async (message) => {
+  wsClient.on('message', async (message) => {
     try {
       const { event, project } = JSON.parse(message.toString());
 
       switch (event) {
         case 'startOutbound':
+          // 步驟一: 初始化專案並抓 3CX token
           const projectInstance = await initOutboundProject(project);
-          ws.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN) {
-              client.send(projectInstance.toString());
-            }
-          });
+          // 步驟二: 連線 3CX WebSocket，並傳入 ws 實例以便廣播
+          await projectInstance.create3cxWebSocketConnection(ws);
           break;
         case 'stopOutbound':
           logWithTimestamp('停止 外撥事件:', project);
@@ -105,13 +116,6 @@ wsClient.on('message', async (message) => {
         default:
           warnWithTimestamp('未知事件:', event);
       }
-
-      // 廣播給所有連線中的 client
-      // ws.clients.forEach((client) => {
-      //   if (client.readyState === WebSocket.OPEN) {
-      //     client.send(message.toString());
-      //   }
-      // });
     } catch (error) {
       errorWithTimestamp('WebSocket message handling error:', error);
       // 可以選擇發送錯誤訊息給客戶端
@@ -122,7 +126,7 @@ wsClient.on('message', async (message) => {
       //   }));
       // }
     }
-});
+  });
 
   wsClient.on('close', () => {
     logWithTimestamp('👋 WebSocket client disconnected');
