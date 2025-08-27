@@ -8,7 +8,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 
 import { router as bonsaleRouter } from './routes/bonsale';
 
-import { logWithTimestamp, warnWithTimestamp } from './util/timestamp';
+import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from './util/timestamp';
 import { get3cxToken } from './services/api/callControl';
 import Project from './class/project';
 
@@ -76,6 +76,7 @@ async function initOutboundProject(projectData: any) {
     token.data.access_token
   );
   logWithTimestamp('Initialized Project:', project);
+  return project;
 }
 
 
@@ -85,31 +86,43 @@ const ws = new WebSocketServer({ server: httpServer });
 ws.on('connection', (wsClient) => {
   logWithTimestamp('🔌 WebSocket client connected');
 
-  wsClient.on('message', (message) => {
-    const { event, project } = JSON.parse(message.toString());
+wsClient.on('message', async (message) => {
+    try {
+      const { event, project } = JSON.parse(message.toString());
 
-    switch (event) {
-      case 'startOutbound':
-        // 處理開始外撥事件
-        // logWithTimestamp('開始 外撥事件:', project);
-        initOutboundProject(project)
-        break;
-      case 'stopOutbound':
-        // 處理停止外撥事件
-        logWithTimestamp('停止 外撥事件:', project);
-        break;
-      default:
-        warnWithTimestamp('未知事件:', event);
-    }
-
-    // logWithTimestamp('💬 Received:', message.toString());
-    // 廣播給所有連線中的 client
-    ws.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message.toString());
+      switch (event) {
+        case 'startOutbound':
+          const projectInstance = await initOutboundProject(project);
+          ws.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(projectInstance.toString());
+            }
+          });
+          break;
+        case 'stopOutbound':
+          logWithTimestamp('停止 外撥事件:', project);
+          break;
+        default:
+          warnWithTimestamp('未知事件:', event);
       }
-    });
-  });
+
+      // 廣播給所有連線中的 client
+      // ws.clients.forEach((client) => {
+      //   if (client.readyState === WebSocket.OPEN) {
+      //     client.send(message.toString());
+      //   }
+      // });
+    } catch (error) {
+      errorWithTimestamp('WebSocket message handling error:', error);
+      // 可以選擇發送錯誤訊息給客戶端
+      // if (wsClient.readyState === WebSocket.OPEN) {
+      //   wsClient.send(JSON.stringify({ 
+      //     error: 'Message processing failed',
+      //     message: typeof error === 'object' && error !== null && 'message' in error ? (error as { message?: string }).message : String(error)
+      //   }));
+      // }
+    }
+});
 
   wsClient.on('close', () => {
     logWithTimestamp('👋 WebSocket client disconnected');
