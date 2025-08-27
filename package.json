@@ -36,5 +36,8 @@
     "turbo": "^1.10.0",
     "typescript": "^5.0.0"
   },
-  "packageManager": "pnpm@8.6.0"
+  "packageManager": "pnpm@8.6.0",
+  "dependencies": {
+    "redis": "^5.8.2"
+  }
 }

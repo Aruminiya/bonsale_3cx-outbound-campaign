@@ -22,6 +22,7 @@ export default class Project {
   action: 'init' | 'active';
   error: string | null;
   access_token: string | null;
+  agentQuantity: number | 0;
   ws_3cx: WebSocket | null;
 
   constructor(
@@ -32,6 +33,7 @@ export default class Project {
     action: 'init' | 'active',
     error: string | null = null,
     access_token: string | null = null,
+    agentQuantity: number | 0,
     ws_3cx: WebSocket | null = null
   ) {
     this.grant_type = 'client_credentials';
@@ -42,6 +44,7 @@ export default class Project {
     this.action = action;
     this.error = error;
     this.access_token = access_token;
+    this.agentQuantity = agentQuantity;
     this.ws_3cx = ws_3cx;
   }
 
@@ -88,7 +91,7 @@ export default class Project {
         logWithTimestamp('3CX WebSocket 連接成功');
 
         try {
-          // 步驟一:  從 專案​ ​中​ 判斷 ​專案​的​狀態​
+          // 步驟一: 從 專案​ ​中​ 判斷 ​專案​的​狀態​
           if (this.action === 'init' || this.action === 'active') {
             logWithTimestamp('當前專案狀態為:', this.action);
             
@@ -99,7 +102,12 @@ export default class Project {
             }
             
             const caller = await getCaller(this.access_token);
-            const callerInfo = caller.success ? caller.data : caller.error;
+            if (!caller.success) {
+              logWithTimestamp('獲取呼叫者資訊失敗:', caller.error);
+              resolve(); // 即使獲取呼叫者資訊失敗，WebSocket 連接仍然有效
+              return;
+            }
+            const callerInfo = caller.data;
             logWithTimestamp('呼叫者資訊:', callerInfo);
 
             // 更新總專案暫存 該專案的 callerInfo 並 廣播 callerInfo 給所有連線中的 client

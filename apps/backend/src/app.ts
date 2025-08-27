@@ -11,6 +11,9 @@ import { router as bonsaleRouter } from './routes/bonsale';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from './util/timestamp';
 import { get3cxToken } from './services/api/callControl';
 import Project from './class/project';
+import { initRedis, closeRedis } from './services/redis';
+import { ProjectManager } from './class/projectManager';
+import { getCaller } from './services/api/callControl'
 
 // Load environment variables
 dotenv.config();
@@ -74,7 +77,24 @@ type ProjectData = {
 async function initOutboundProject(projectData: ProjectData) {
   const { projectId, callFlowId, client_id, client_secret } = projectData;
 
+  // 檢查專案是否已存在
+  const existingProject = await ProjectManager.getProject(projectId);
+  if (existingProject) {
+    logWithTimestamp(`專案 ${projectId} 已存在，返回現有實例`);
+    return existingProject;
+  }
+
   const token = await get3cxToken(client_id, client_secret);
+  const { access_token } = token.data;
+  if (!access_token) {
+    throw new Error('Failed to obtain access token');
+  }
+
+  const caller = await getCaller(access_token);
+  if (!caller.success) {
+    throw new Error('Failed to obtain caller information');
+  }
+  const agentQuantity = caller.data.length;
 
   const project = new Project(
     client_id,
@@ -83,9 +103,14 @@ async function initOutboundProject(projectData: ProjectData) {
     projectId,
     'init',
     null,
-    token.data.access_token
+    access_token,
+    agentQuantity
   );
-  // logWithTimestamp('Initialized Project:', project);
+
+  // 儲存專案到 Redis
+  await ProjectManager.saveProject(project);
+  
+  logWithTimestamp(`專案 ${projectId} 初始化完成並儲存到 Redis`);
   return project;
 }
 
@@ -105,13 +130,15 @@ ws.on('connection', (wsClient) => {
 
       switch (event) {
         case 'startOutbound':
-          // 步驟一: 初始化專案並抓 3CX token
+          // 初始化專案並抓 3CX token，儲存到 Redis
           const projectInstance = await initOutboundProject(project);
-          // 步驟二: 連線 3CX WebSocket，並傳入 ws 實例以便廣播
+          // 連線 3CX WebSocket，並傳入 ws 實例以便廣播
           await projectInstance.create3cxWebSocketConnection(ws);
           break;
         case 'stopOutbound':
           logWithTimestamp('停止 外撥事件:', project);
+          // 移除專案
+          await ProjectManager.removeProject(project.projectId);
           break;
         default:
           warnWithTimestamp('未知事件:', event);
@@ -133,11 +160,43 @@ ws.on('connection', (wsClient) => {
   });
 });
 
-httpServer.listen(PORT, () => {
-  logWithTimestamp(`🚀 Server is running on port ${PORT}`);
-  logWithTimestamp(`📍 Check: http://localhost:${PORT}`);
-  logWithTimestamp(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  logWithTimestamp(`🔌 WebSocket server is running at ws://localhost:${PORT}`);
+httpServer.listen(PORT, async () => {
+  try {
+    // 初始化 Redis 連接
+    await initRedis();
+    
+    logWithTimestamp(`🚀 Server is running on port ${PORT}`);
+    logWithTimestamp(`📍 Check: http://localhost:${PORT}`);
+    logWithTimestamp(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    logWithTimestamp(`🔌 WebSocket server is running at ws://localhost:${PORT}`);
+    logWithTimestamp(`🔴 Redis server is connected`);
+  } catch (error) {
+    errorWithTimestamp('啟動服務器失敗:', error);
+    process.exit(1);
+  }
+});
+
+// 優雅關閉
+process.on('SIGINT', async () => {
+  logWithTimestamp('收到 SIGINT 信號，正在關閉服務器...');
+  try {
+    await closeRedis();
+    process.exit(0);
+  } catch (error) {
+    errorWithTimestamp('關閉 Redis 連接失敗:', error);
+    process.exit(1);
+  }
+});
+
+process.on('SIGTERM', async () => {
+  logWithTimestamp('收到 SIGTERM 信號，正在關閉服務器...');
+  try {
+    await closeRedis();
+    process.exit(0);
+  } catch (error) {
+    errorWithTimestamp('關閉 Redis 連接失敗:', error);
+    process.exit(1);
+  }
 });
 
 export default app;
