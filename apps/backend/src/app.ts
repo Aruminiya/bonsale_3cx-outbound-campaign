@@ -7,7 +7,6 @@ import { createServer } from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 
 import { router as bonsaleRouter } from './routes/bonsale';
-import projectOutboundRouter from './routes/projectOutbound';
 
 import { logWithTimestamp, warnWithTimestamp } from './util/timestamp';
 
@@ -24,10 +23,8 @@ app.use(morgan('combined')); // Logging
 app.use(express.json({ limit: '10mb' })); // Parse JSON bodies
 app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 
-// API Routes
 // Mount API routes
 app.use('/api/bonsale', bonsaleRouter);
-app.use('/api/project-outbound', projectOutboundRouter);
 
 // Root endpoint
 app.get('/', (req, res) => {
