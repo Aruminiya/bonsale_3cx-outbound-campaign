@@ -117,7 +117,8 @@ export default function Home() {
       event: 'startOutbound',
       project: {
         callFlowId: project.callFlowId,
-        // customerId: project.customerId,
+        client_id: project.appId,
+        client_secret: project.appSecret,
         projectId: project.projectId,
         action: 'init',
         error: null

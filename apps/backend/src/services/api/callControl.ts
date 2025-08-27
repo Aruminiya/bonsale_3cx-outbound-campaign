@@ -10,10 +10,10 @@ if (!host) {
 }
 
 // 取得 3CX token
-export async function get3cxToken(grant_type: string, client_id: string, client_secret: string) {
+export async function get3cxToken(client_id: string, client_secret: string) {
   try {
     const params = new URLSearchParams();
-    params.append('grant_type', grant_type);
+    params.append('grant_type', 'client_credentials');
     params.append('client_id', client_id);
     params.append('client_secret', client_secret);
 
