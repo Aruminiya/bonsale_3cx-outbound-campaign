@@ -10,7 +10,7 @@ const router: Router = express.Router();
 // Error handler helper function
 const handleError = (error: unknown, operation: string, res: Response) => {
   console.error(`Error in ${operation}:`, error instanceof Error ? error.message : String(error));
-  const status = error instanceof Error && 'status' in error ? (error as any).status : 500;
+  const status = error instanceof Error && 'status' in error ? (error as { status: number }).status : 500;
   const message = error instanceof Error ? error.message : String(error);
   return res.status(status).send(`Error in ${operation}: ${message}`);
 };
@@ -49,9 +49,7 @@ router.post('/WebHook', async function(req, res) {
     });
     res.status(200).send({ message: 'WebHook received' });
   } catch (error: unknown) {
-    console.error('Error in POST /WebHook:', error instanceof Error ? error.message : String(error));
-    const status = error instanceof Error && 'status' in error ? (error as any).status : 500;
-    return res.status(status).send(`Error in POST /WebHook: ${error instanceof Error ? error.message : String(error)}`);
+    return handleError(error, 'POST /WebHook', res);
   }
 });
 
@@ -64,9 +62,7 @@ router.get('/project/auto-dial', async function(req: Request, res: Response) {
     const autoDialProject = autoDialData.data;
     return res.status(200).send(autoDialProject);
   } catch (error: unknown) {
-    console.error('Error in GET /auto-dial:', error instanceof Error ? error.message : String(error));
-    const status = error instanceof Error && 'status' in error ? (error as any).status : 500;
-    return res.status(status).send(`Error in GET /auto-dial: ${error instanceof Error ? error.message : String(error)}`);
+    return handleError(error, 'GET /project/auto-dial', res);
   }
 });
 
@@ -76,16 +72,14 @@ router.get('/project/:projectId/auto-dial/:callFlowId', async function(req: Requ
   console.log('projectId:', projectId);
   console.log('callFlowId:', callFlowId);
   if (!projectId || !callFlowId) {
-    return res.status(400).send('Error in GET /auto-dial: Missing required fields');
+    return res.status(400).send('Error in GET /project/:projectId/auto-dial/:callFlowId: Missing required fields');
   };
   try {
     const autoDialData = await axiosBonsaleInstance.get(`${host}/project/${projectId}/auto-dial/${callFlowId}`);
     const autoDialProject = autoDialData.data;
     return res.status(200).send(autoDialProject);
   } catch (error: unknown) {
-    console.error('Error in GET /auto-dial:', error instanceof Error ? error.message : String(error));
-    const status = error instanceof Error && 'status' in error ? (error as any).status : 500;
-    return res.status(status).send(`Error in GET /auto-dial: ${error instanceof Error ? error.message : String(error)}`);
+    return handleError(error, 'GET /project/:projectId/auto-dial/:callFlowId', res);
   }
 });
 
