@@ -48,10 +48,10 @@ app.use('*', (req, res) => {
 });
 
 // Error handling middleware
-app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Error:', err);
   
-  res.status(err.status || 500).json({
+  res.status(500).json({
     success: false,
     message: err.message || 'Internal server error',
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
@@ -143,19 +143,19 @@ ws.on('connection', (wsClient) => {
 
   wsClient.on('message', async (message) => {
     try {
-      const { event, project } = JSON.parse(message.toString());
+      const { event, payload } = JSON.parse(message.toString());
 
       switch (event) {
         case 'startOutbound':
           // 初始化專案並抓 3CX token，儲存到 Redis
-          const projectInstance = await initOutboundProject(project);
+          const projectInstance = await initOutboundProject(payload.project);
           // 連線 3CX WebSocket，並傳入 ws 實例以便廣播
           await projectInstance.create3cxWebSocketConnection(ws);
           break;
         case 'stopOutbound':
-          logWithTimestamp('停止 外撥事件:', project);
+          logWithTimestamp('停止 外撥事件:', payload.project);
           // 移除專案
-          await ProjectManager.removeProject(project.projectId);
+          await ProjectManager.removeProject(payload.project.projectId);
           break;
         default:
           warnWithTimestamp('未知事件:', event);

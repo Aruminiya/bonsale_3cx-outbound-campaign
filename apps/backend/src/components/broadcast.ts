@@ -18,24 +18,27 @@ export async function broadcastAllProjects(
       ProjectManager.getProjectStats()
     ]);
     
-    // 構建廣播訊息
+    // 構建廣播訊息 - 統一格式
     const allProjectsMessage = JSON.stringify({
-      type: 'allProjects',
-      data: allProjects.map(p => ({
-        projectId: p.projectId,
-        callFlowId: p.callFlowId,
-        action: p.action,
-        client_id: p.client_id,
-        agentQuantity: p.agentQuantity,
-        caller: p.caller,
-        access_token: p.access_token ? '***' : null, // 隱藏敏感資訊
-        ws_connected: p.isWebSocketConnected(), // 添加 WebSocket 連接狀態
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      })),
-      stats: projectStats,
-      timestamp: new Date().toISOString(),
-      triggeredBy: includeProjectId || 'system' // 記錄是哪個專案觸發的廣播
+      event: 'projectsUpdate',
+      payload: {
+        type: 'allProjects',
+        data: allProjects.map(p => ({
+          projectId: p.projectId,
+          callFlowId: p.callFlowId,
+          action: p.action,
+          client_id: p.client_id,
+          agentQuantity: p.agentQuantity,
+          caller: p.caller,
+          access_token: p.access_token ? '***' : null, // 隱藏敏感資訊
+          ws_connected: p.isWebSocketConnected(), // 添加 WebSocket 連接狀態
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        })),
+        stats: projectStats,
+        timestamp: new Date().toISOString(),
+        triggeredBy: includeProjectId || 'system' // 記錄是哪個專案觸發的廣播
+      }
     });
 
     // 廣播給所有連線中的客戶端
@@ -75,10 +78,12 @@ export async function broadcastMessage(
 ): Promise<void> {
   try {
     const message = JSON.stringify({
-      type: messageType,
-      data: data,
-      timestamp: new Date().toISOString(),
-      ...additionalInfo
+      event: messageType,
+      payload: {
+        data: data,
+        timestamp: new Date().toISOString(),
+        ...additionalInfo
+      }
     });
 
     let connectedClients = 0;

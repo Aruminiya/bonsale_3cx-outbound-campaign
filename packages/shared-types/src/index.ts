@@ -7,6 +7,9 @@ export interface ApiResponse<T = any> {
   timestamp: string;
 }
 
+// WebSocket 型別
+export * from './websocket';
+
 // 使用者相關型別
 export interface User {
   id: string;

@@ -29,11 +29,16 @@ import useUpdateBonsaleProject from '../hooks/api/useUpdateBonsaleProject';
 
 type SendMessagePayload = {
   event: string;
-  project: {
-    callFlowId: string;
-    projectId: string;
-    action: string;
-    error: string | null;
+  payload: {
+    project?: {
+      callFlowId: string;
+      projectId: string;
+      client_id: string;
+      client_secret: string;
+      action: string;
+      error: string | null;
+    };
+    // 可以根據需要添加其他類型的 payload
   };
 };
 
@@ -115,13 +120,15 @@ export default function Home() {
   const handleStartOutbound = (project: ProjectOutboundDataType) => {
     const message = {
       event: 'startOutbound',
-      project: {
-        callFlowId: project.callFlowId,
-        client_id: project.appId,
-        client_secret: project.appSecret,
-        projectId: project.projectId,
-        action: 'init',
-        error: null
+      payload: {
+        project: {
+          callFlowId: project.callFlowId,
+          client_id: project.appId,
+          client_secret: project.appSecret,
+          projectId: project.projectId,
+          action: 'init',
+          error: null
+        }
       }
     }
 
