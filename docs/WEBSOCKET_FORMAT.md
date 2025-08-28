@@ -67,10 +67,9 @@
 #### 1. 專案資訊更新
 ```typescript
 {
-  event: 'projectsUpdate',
+  event: 'allProjects',
   payload: {
-    type: 'allProjects',
-    data: [
+    allProjects: [
       {
         projectId: string;
         callFlowId: string;
@@ -92,34 +91,6 @@
     },
     timestamp: string;
     triggeredBy: string;  // 觸發來源（專案ID 或 'system'）
-  }
-}
-```
-
-#### 2. 專案狀態變更
-```typescript
-{
-  event: 'projectStatusChange',
-  payload: {
-    data: {
-      projectId: string;
-      oldAction: string;
-      newAction: string;
-      changedAt: string;
-    },
-    timestamp: string;
-  }
-}
-```
-
-#### 3. 錯誤訊息
-```typescript
-{
-  event: 'error',
-  payload: {
-    error: string;
-    message: string;
-    timestamp: string;
   }
 }
 ```

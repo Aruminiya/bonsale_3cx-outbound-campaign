@@ -20,10 +20,9 @@ export async function broadcastAllProjects(
     
     // 構建廣播訊息 - 統一格式
     const allProjectsMessage = JSON.stringify({
-      event: 'projectsUpdate',
+      event: 'allProjects',
       payload: {
-        type: 'allProjects',
-        data: allProjects.map(p => ({
+        allProjects: allProjects.map(p => ({
           projectId: p.projectId,
           callFlowId: p.callFlowId,
           action: p.action,
@@ -64,64 +63,57 @@ export async function broadcastAllProjects(
 }
 
 /**
- * 廣播特定類型的訊息給所有連線中的客戶端
+ * 廣播有錯誤發生的資訊給所有連線中的 WebSocket 客戶端
  * @param broadcastWs WebSocket 服務器實例
- * @param messageType 訊息類型
- * @param data 要廣播的資料
- * @param additionalInfo 額外資訊
+ * @param errorInfo 錯誤資訊
  */
-export async function broadcastMessage(
+export async function broadcastError(
   broadcastWs: WebSocketServer,
-  messageType: string,
-  data: unknown,
-  additionalInfo?: Record<string, unknown>
+  errorInfo: unknown
 ): Promise<void> {
-  try {
-    const message = JSON.stringify({
-      event: messageType,
-      payload: {
-        data: data,
-        timestamp: new Date().toISOString(),
-        ...additionalInfo
-      }
-    });
-
-    let connectedClients = 0;
-    broadcastWs.clients.forEach((client) => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-        connectedClients++;
-      }
-    });
-
-    logWithTimestamp(`📡 已廣播 ${messageType} 訊息給 ${connectedClients} 個客戶端`);
+  // 處理錯誤對象，確保可以正確序列化
+  let errorData: Record<string, unknown>;
+  
+  if (errorInfo instanceof Error) {
+    errorData = {
+      name: errorInfo.name,
+      message: errorInfo.message,
+      stack: process.env.NODE_ENV === 'development' ? errorInfo.stack : undefined
+    };
     
-  } catch (error) {
-    errorWithTimestamp(`❌ 廣播 ${messageType} 訊息失敗:`, error);
-    throw error;
+    // 如果有 cause 屬性，也加入
+    if ('cause' in errorInfo && errorInfo.cause) {
+      errorData.cause = errorInfo.cause;
+    }
+  } else if (typeof errorInfo === 'string') {
+    errorData = {
+      message: errorInfo
+    };
+  } else if (typeof errorInfo === 'object' && errorInfo !== null) {
+    errorData = { ...errorInfo as Record<string, unknown> };
+  } else {
+    errorData = {
+      message: String(errorInfo) || 'Unknown error'
+    };
   }
-}
 
-/**
- * 廣播專案狀態變更
- * @param broadcastWs WebSocket 服務器實例
- * @param projectId 專案 ID
- * @param oldAction 舊狀態
- * @param newAction 新狀態
- */
-export async function broadcastProjectStatusChange(
-  broadcastWs: WebSocketServer,
-  projectId: string,
-  oldAction: string,
-  newAction: string
-): Promise<void> {
-  await broadcastMessage(broadcastWs, 'projectStatusChange', {
-    projectId,
-    oldAction,
-    newAction,
-    changedAt: new Date().toISOString()
+  // 構建廣播訊息 - 統一格式
+  const errorMessage = JSON.stringify({
+    event: 'error',
+    payload: {
+      error: errorData,
+      timestamp: new Date().toISOString()
+    }   
+  });
+
+  // 廣播給所有連線中的客戶端
+  let connectedClients = 0;
+  broadcastWs.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(errorMessage);
+      connectedClients++;
+    }
   });
   
-  // 狀態變更後，也廣播所有專案的最新資訊
-  await broadcastAllProjects(broadcastWs, projectId);
+  errorWithTimestamp(`❌ 已廣播錯誤訊息給 ${connectedClients} 個客戶端:`, errorData);
 }

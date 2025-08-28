@@ -13,7 +13,8 @@ import { get3cxToken } from './services/api/callControl';
 import Project from './class/project';
 import { initRedis, closeRedis } from './services/redis';
 import { ProjectManager } from './class/projectManager';
-import { getCaller } from './services/api/callControl'
+import { getCaller } from './services/api/callControl';
+import { broadcastError } from './components/broadcast';
 
 // Load environment variables
 dotenv.config();
@@ -84,10 +85,11 @@ async function initOutboundProject(projectData: ProjectData) {
     
     // 更新 access token（因為可能已過期）
     const token = await get3cxToken(client_id, client_secret);
-    const { access_token } = token.data;
-    if (!access_token) {
-      throw new Error('Failed to obtain access token');
+    
+    if (!token.success) {
+      throw new Error(`Failed to obtain access token: ${token.error?.error || 'Unknown error'}`);
     }
+    const { access_token } = token.data;
     
     // 更新專案實例的 token
     existingProject.access_token = access_token;
@@ -100,9 +102,13 @@ async function initOutboundProject(projectData: ProjectData) {
   }
 
   const token = await get3cxToken(client_id, client_secret);
+  if (!token.success) {
+    throw new Error(`Failed to obtain access token: ${token.error?.error || 'Unknown error'}`);
+  }
+  
   const { access_token } = token.data;
   if (!access_token) {
-    throw new Error('Failed to obtain access token');
+    throw new Error('Failed to obtain access token: token is empty');
   }
 
   const caller = await getCaller(access_token);
@@ -162,13 +168,8 @@ ws.on('connection', (wsClient) => {
       }
     } catch (error) {
       errorWithTimestamp('WebSocket message handling error:', error);
-      // 可以選擇發送錯誤訊息給客戶端
-      // if (wsClient.readyState === WebSocket.OPEN) {
-      //   wsClient.send(JSON.stringify({ 
-      //     error: 'Message processing failed',
-      //     message: typeof error === 'object' && error !== null && 'message' in error ? (error as { message?: string }).message : String(error)
-      //   }));
-      // }
+      // 發送錯誤訊息給客戶端
+      broadcastError(ws, error);
     }
   });
 

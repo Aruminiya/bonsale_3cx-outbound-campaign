@@ -93,12 +93,19 @@ export interface ProjectStatusChangeMessage extends ServerToClientMessage {
   };
 }
 
+// 錯誤資料結構
+export interface ErrorData {
+  name?: string;
+  message: string;
+  stack?: string;
+  cause?: unknown;
+}
+
 // 錯誤訊息
 export interface ErrorMessage extends ServerToClientMessage {
   event: 'error';
   payload: {
-    error: string;
-    message: string;
+    error: ErrorData;
     timestamp: string;
   };
 }
