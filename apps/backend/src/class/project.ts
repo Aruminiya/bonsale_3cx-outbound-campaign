@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from '../util/timestamp';
 import { getCaller } from '../services/api/callControl'
 import { ProjectManager } from '../services/projectManager';
+import { broadcastAllProjects } from '../components/broadcast';
 
 dotenv.config();
 
@@ -141,35 +142,9 @@ export default class Project {
 
             // 將全部專案廣播給所有連線中的 client
             if (broadcastWs) {             
-              // 廣播所有專案的資訊
+              // 廣播所有專案的資訊 - 使用模組化函數
               try {
-                const allProjects = await ProjectManager.getAllActiveProjects();
-                const projectStats = await ProjectManager.getProjectStats();
-                
-                const allProjectsMessage = JSON.stringify({
-                  type: 'allProjects',
-                  data: allProjects.map(p => ({
-                    projectId: p.projectId,
-                    callFlowId: p.callFlowId,
-                    action: p.action,
-                    client_id: p.client_id,
-                    agentQuantity: p.agentQuantity,
-                    caller: p.caller,
-                    access_token: p.access_token ? '***' : null, // 隱藏敏感資訊
-                    createdAt: new Date().toISOString(), // 可以從 Redis 取得實際時間
-                    updatedAt: new Date().toISOString()
-                  })),
-                  stats: projectStats,
-                  timestamp: new Date().toISOString()
-                });
-
-                broadcastWs.clients.forEach((client) => {
-                  if (client.readyState === WebSocket.OPEN) {
-                    client.send(allProjectsMessage);
-                  }
-                });
-                
-                logWithTimestamp(`已廣播所有專案資訊給所有連線中的客戶端 (共 ${allProjects.length} 個專案)`);
+                await broadcastAllProjects(broadcastWs);
               } catch (broadcastError) {
                 errorWithTimestamp('廣播所有專案資訊失敗:', broadcastError);
               }
