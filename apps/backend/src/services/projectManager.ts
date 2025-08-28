@@ -21,6 +21,7 @@ export class ProjectManager {
         action: project.action,
         error: project.error || '',
         access_token: project.access_token || '',
+        caller: project.caller ? JSON.stringify(project.caller) : '',
         agentQuantity: project.agentQuantity?.toString() || '0',
         // ws_3cx 不儲存，因為 WebSocket 無法序列化
         createdAt: new Date().toISOString(),
@@ -62,7 +63,7 @@ export class ProjectManager {
         projectData.action as 'init' | 'active',
         projectData.error || null,
         projectData.access_token || null,
-        null, // caller - 不儲存在 Redis 中，設為 null
+        projectData.caller ? JSON.parse(projectData.caller) : null, // 解析 JSON 字串
         parseInt(projectData.agentQuantity) || 0,
         null // ws_3cx - WebSocket 不儲存，設為 null
       );
@@ -132,6 +133,32 @@ export class ProjectManager {
       logWithTimestamp(`專案 ${projectId} Access Token 已更新`);
     } catch (error) {
       errorWithTimestamp('更新專案 Access Token 失敗:', error);
+      throw error;
+    }
+  }
+
+  // 更新專案 Caller 資訊
+  static async updateProjectCaller(projectId: string, callerInfo: Array<{
+    dn: string;
+    type: string;
+    devices: Array<{
+      dn: string;
+      device_id: string;
+      user_agent: string;
+    }>;
+    participants: Array<unknown>;
+  }>): Promise<void> {
+    try {
+      const projectKey = `${this.PROJECT_PREFIX}${projectId}`;
+      await redisClient.hSet(projectKey, {
+        caller: JSON.stringify(callerInfo),
+        agentQuantity: callerInfo.length.toString(),
+        updatedAt: new Date().toISOString()
+      });
+      
+      logWithTimestamp(`專案 ${projectId} Caller 資訊已更新`);
+    } catch (error) {
+      errorWithTimestamp('更新專案 Caller 資訊失敗:', error);
       throw error;
     }
   }

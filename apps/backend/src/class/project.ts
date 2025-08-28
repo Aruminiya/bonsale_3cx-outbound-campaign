@@ -2,6 +2,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import dotenv from 'dotenv';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from '../util/timestamp';
 import { getCaller } from '../services/api/callControl'
+import { ProjectManager } from '../services/projectManager';
 
 dotenv.config();
 
@@ -114,32 +115,64 @@ export default class Project {
               resolve(); // 即使沒有 token 也要 resolve，讓 WebSocket 連接完成
               return;
             }
-            
-            const caller = await getCaller(this.access_token);
-            if (!caller.success) {
-              logWithTimestamp('獲取呼叫者資訊失敗:', caller.error);
-              resolve(); // 即使獲取呼叫者資訊失敗，WebSocket 連接仍然有效
-              return;
+
+            if (this.action === 'active') {
+              const caller = await getCaller(this.access_token);
+              if (!caller.success) {
+                logWithTimestamp('獲取呼叫者資訊失敗:', caller.error);
+                resolve(); // 即使獲取呼叫者資訊失敗，WebSocket 連接仍然有效
+                return;
+              }
+              const callerInfo = caller.data;
+              logWithTimestamp('呼叫者資訊:', callerInfo);
+
+              // 更新當前專案實例的 caller 資訊
+              this.caller = callerInfo;
+              this.agentQuantity = callerInfo.length;
+
+              // 同步更新到 Redis 暫存中
+              try {
+                await ProjectManager.updateProjectCaller(this.projectId, callerInfo);
+                logWithTimestamp(`專案 ${this.projectId} 的 caller 資訊已更新到 Redis`);
+              } catch (updateError) {
+                errorWithTimestamp('更新 Redis 中的 caller 資訊失敗:', updateError);
+              }
             }
-            const callerInfo = caller.data;
-            logWithTimestamp('呼叫者資訊:', callerInfo);
 
-            // 更新總專案暫存 該專案的 callerInfo 並 廣播 callerInfo 給所有連線中的 client
-            if (broadcastWs) {
-              const broadcastMessage = JSON.stringify({
-                type: 'callerInfo',
-                data: callerInfo,
-                success: caller.success,
-                timestamp: new Date().toISOString()
-              });
+            // 將全部專案廣播給所有連線中的 client
+            if (broadcastWs) {             
+              // 廣播所有專案的資訊
+              try {
+                const allProjects = await ProjectManager.getAllActiveProjects();
+                const projectStats = await ProjectManager.getProjectStats();
+                
+                const allProjectsMessage = JSON.stringify({
+                  type: 'allProjects',
+                  data: allProjects.map(p => ({
+                    projectId: p.projectId,
+                    callFlowId: p.callFlowId,
+                    action: p.action,
+                    client_id: p.client_id,
+                    agentQuantity: p.agentQuantity,
+                    caller: p.caller,
+                    access_token: p.access_token ? '***' : null, // 隱藏敏感資訊
+                    createdAt: new Date().toISOString(), // 可以從 Redis 取得實際時間
+                    updatedAt: new Date().toISOString()
+                  })),
+                  stats: projectStats,
+                  timestamp: new Date().toISOString()
+                });
 
-              broadcastWs.clients.forEach((client) => {
-                if (client.readyState === WebSocket.OPEN) {
-                  client.send(broadcastMessage);
-                }
-              });
-              
-              logWithTimestamp('已廣播 callerInfo 給所有連線中的客戶端');
+                broadcastWs.clients.forEach((client) => {
+                  if (client.readyState === WebSocket.OPEN) {
+                    client.send(allProjectsMessage);
+                  }
+                });
+                
+                logWithTimestamp(`已廣播所有專案資訊給所有連線中的客戶端 (共 ${allProjects.length} 個專案)`);
+              } catch (broadcastError) {
+                errorWithTimestamp('廣播所有專案資訊失敗:', broadcastError);
+              }
             }
 
             // 步驟二: 得到​該專案​分機​資訊 遍歷​結果​ 查詢​有​無participants​資料
