@@ -64,8 +64,7 @@ export class ProjectManager {
         projectData.error || null,
         projectData.access_token || null,
         projectData.caller ? JSON.parse(projectData.caller) : null, // 解析 JSON 字串
-        parseInt(projectData.agentQuantity) || 0,
-        null // ws_3cx - WebSocket 不儲存，設為 null
+        parseInt(projectData.agentQuantity) || 0
       );
 
       return project;
