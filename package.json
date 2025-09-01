@@ -38,6 +38,8 @@
   },
   "packageManager": "pnpm@8.6.0",
   "dependencies": {
+    "@types/jsonwebtoken": "^9.0.7",
+    "jsonwebtoken": "^9.0.2",
     "redis": "^5.8.2"
   }
 }

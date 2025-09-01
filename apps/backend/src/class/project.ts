@@ -5,6 +5,7 @@ import { getCaller, makeCall } from '../services/api/callControl'
 import { ProjectManager } from '../services/projectManager';
 import { broadcastAllProjects } from '../components/broadcast';
 import { WebSocketManager } from './webSocketManager';
+import { TokenManager } from './tokenManager';
 
 dotenv.config();
 
@@ -53,6 +54,7 @@ export default class Project {
   caller: Array<Caller> | null;
   agentQuantity: number | 0;
   private wsManager: WebSocketManager | null = null;
+  private tokenManager: TokenManager;
 
   constructor(
     client_id: string,
@@ -75,10 +77,14 @@ export default class Project {
     this.access_token = access_token;
     this.caller = caller;
     this.agentQuantity = agentQuantity;
+    
+    // 初始化 TokenManager
+    this.tokenManager = new TokenManager(client_id, client_secret, projectId, access_token);
   }
 
   updateAccessToken(newAccessToken: string): void {
     this.access_token = newAccessToken;
+    this.tokenManager.updateAccessToken(newAccessToken);
   }
 
   updateAction(newAction: 'init' | 'active'): void {
@@ -189,10 +195,25 @@ export default class Project {
         return;
       }
       
-      // 步驟二: 檢查 access_token
+      // 步驟二: 檢查並刷新 access_token
       if (!this.access_token) {
         logWithTimestamp('當前專案缺少 access_token');
         return;
+      }
+
+      // 檢測 token 是否到期並自動刷新
+      const tokenValid = await this.tokenManager.checkAndRefreshToken();
+      if (!tokenValid) {
+        errorWithTimestamp('無法獲得有效的 access_token，停止外撥流程');
+        return;
+      }
+
+      // 同步更新當前實例的 token（如果 TokenManager 中的 token 被更新了）
+      const currentToken = this.tokenManager.getAccessToken();
+      if (currentToken && currentToken !== this.access_token) {
+        this.access_token = currentToken;
+        // Token 已更新，需要重新建立 WebSocket 連接
+        await this.handleTokenUpdateWebSocketReconnect();
       }
 
       // 步驟三: 獲取並更新 caller 資訊
@@ -307,6 +328,49 @@ export default class Project {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  /**
+   * 處理 token 更新後的 WebSocket 重連
+   */
+  private async handleTokenUpdateWebSocketReconnect(): Promise<void> {
+    if (this.wsManager && this.wsManager.isConnected() && this.access_token) {
+      try {
+        logWithTimestamp('Token 已更新，重新建立 WebSocket 連接');
+        await this.wsManager.disconnect();
+        
+        // 重新創建 WebSocket 管理器，使用新的 token
+        this.wsManager = new WebSocketManager(
+          {
+            url: `${WS_HOST_3CX}/callcontrol/ws`,
+            headers: {
+              Authorization: `Bearer ${this.access_token}`
+            },
+            heartbeatInterval: 30000,
+            reconnectDelay: 3000,
+            maxReconnectAttempts: 5
+          },
+          {
+            onOpen: async () => {
+              logWithTimestamp('3CX WebSocket 重新連接成功（token 更新後）');
+            },
+            onMessage: (data) => {
+              this.handleWebSocketMessage(data);
+            },
+            onError: (error) => {
+              errorWithTimestamp('3CX WebSocket 錯誤:', error);
+            },
+            onClose: (code, reason) => {
+              logWithTimestamp(`3CX WebSocket 關閉: ${code} - ${reason}`);
+            }
+          }
+        );
+        
+        await this.wsManager.connect();
+      } catch (error) {
+        errorWithTimestamp('Token 更新後重連 WebSocket 失敗:', error);
+      }
+    }
+  }
+
   disconnect3cxWebSocket(): Promise<void> {
     if (this.wsManager) {
       return this.wsManager.disconnect();
@@ -322,5 +386,37 @@ export default class Project {
   // 獲取連接狀態的方法
   getWebSocketState(): string {
     return this.wsManager?.getState() ?? 'DISCONNECTED';
+  }
+
+  // Token 相關的便捷方法
+  /**
+   * 獲取 token 的剩餘有效時間（分鐘）
+   */
+  getTokenRemainingTime(): number {
+    if (!this.access_token) return 0;
+    return this.tokenManager.getTokenRemainingTime(this.access_token);
+  }
+
+  /**
+   * 強制刷新 token
+   */
+  async forceRefreshToken(): Promise<boolean> {
+    const result = await this.tokenManager.forceRefreshToken();
+    if (result) {
+      const newToken = this.tokenManager.getAccessToken();
+      if (newToken) {
+        this.access_token = newToken;
+        await this.handleTokenUpdateWebSocketReconnect();
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 檢查 token 是否即將過期
+   */
+  isTokenExpiringSoon(bufferMinutes: number = 5): boolean {
+    if (!this.access_token) return true;
+    return this.tokenManager.isTokenExpired(this.access_token, bufferMinutes);
   }
 }
