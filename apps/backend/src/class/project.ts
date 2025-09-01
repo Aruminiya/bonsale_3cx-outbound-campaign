@@ -1,7 +1,7 @@
 import { WebSocket, WebSocketServer } from "ws";
 import dotenv from 'dotenv';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from '../util/timestamp';
-import { getCaller } from '../services/api/callControl'
+import { getCaller, makeCall } from '../services/api/callControl'
 import { ProjectManager } from '../services/projectManager';
 import { broadcastAllProjects } from '../components/broadcast';
 
@@ -15,6 +15,20 @@ if (!WS_HOST_3CX) {
   console.warn('警告: WS_HOST_3CX 環境變數未設定');
 }
 
+type Participants = {
+    id: number,
+    status: "Dialing" | "Connected",
+    party_caller_name: string,
+    party_dn: string,
+    party_caller_id: string,
+    device_id: string,
+    party_dn_type: string,
+    direct_control: boolean,
+    callid: number,
+    legid: number,
+    dn: string
+}
+
 type Caller = {
   dn: string;
   type: string;
@@ -23,7 +37,7 @@ type Caller = {
     device_id: string;
     user_agent: string;
   }>;
-  participants: Array<unknown>;
+  participants: Array<Participants>;
 }
 
 export default class Project {
@@ -35,7 +49,7 @@ export default class Project {
   action: 'init' | 'active';
   error: string | null;
   access_token: string | null;
-  caller: Caller | null;
+  caller: Array<Caller> | null;
   agentQuantity: number | 0;
   ws_3cx: WebSocket | null;
 
@@ -47,7 +61,7 @@ export default class Project {
     action: 'init' | 'active',
     error: string | null = null,
     access_token: string | null = null,
-    caller: Caller | null = null,
+    caller: Array<Caller> | null = null,
     agentQuantity: number | 0,
     ws_3cx: WebSocket | null = null
   ) {
@@ -150,12 +164,24 @@ export default class Project {
               }
             }
 
-            // 步驟二: 得到​該專案​分機​資訊 遍歷​結果​ 查詢​有​無participants​資料
-            // callerInfo.forEach((item: { dn: string; type: string }) => {
-            //   logWithTimestamp(item);
-            // });
+            // 步驟二: 遍歷專案​分機​資訊 查詢​有​無 participants ​資料
+            if (!this.caller || this.caller.length === 0) {
+              errorWithTimestamp('當前專案沒有分機');
+              return;
+            }
+            this.caller.forEach(async (caller: Caller) => {
+              // 步驟三: 抓到分機資訊進行 makeCall
+              const { dn, device_id } = caller.devices[0]; // 取得第一個設備的資訊
+              if (!this.access_token) {
+                errorWithTimestamp('makeCall 時 access_token 為 null');
+                return
+              };
+              logWithTimestamp(caller);
+              // TODO 目前先單純測試撥打電話 之後要建構抓取名單撥打邏輯
+              console.log(this.access_token, dn, device_id,'開始撥打電話到 0902213273');
+              await makeCall(this.access_token, dn, device_id, "outbound", "0902213273");
+            });
           }
-          
           resolve(); // 成功完成初始化
         } catch (error) {
           errorWithTimestamp('初始化專案時發生錯誤:', error);
@@ -163,6 +189,41 @@ export default class Project {
           resolve(); // 即使獲取呼叫者資訊失敗，WebSocket 連接仍然有效
           // 或者如果你認為這是致命錯誤：
           // reject(new Error(`Failed to initialize project: ${error instanceof Error ? error.message : String(error)}`));
+        }
+      });
+
+      // ws_3cx 回傳訊息
+      this.ws_3cx.on('message', (data) => {
+        try {
+          // 將 Buffer 轉換為字符串
+          const messageString = data.toString('utf8');
+          
+          // 嘗試解析 JSON
+          const messageObject = JSON.parse(messageString);
+          
+          // logWithTimestamp('3CX WebSocket 收到訊息 (解析後):', messageObject);
+          
+          // 您可以根據事件類型進行不同的處理
+          if (messageObject.event && messageObject.event.event_type) {
+            // logWithTimestamp('事件類型:', messageObject.event.event_type);
+            
+            // 根據不同的事件類型處理邏輯
+            switch (messageObject.event.event_type) {
+              case 0:
+                logWithTimestamp('狀態 1:', messageObject.event);
+                break; 
+              case 1:
+                logWithTimestamp('狀態 2:', messageObject.event);
+                break;
+              default:
+                logWithTimestamp('未知事件類型:', messageObject.event.event_type);
+            }
+          }
+          
+        } catch (error) {
+          // 如果不是 JSON 格式，直接記錄原始數據
+          logWithTimestamp('3CX WebSocket 收到非JSON訊息:', data.toString('utf8'));
+          errorWithTimestamp('解析 WebSocket 訊息時發生錯誤:', error);
         }
       });
 
