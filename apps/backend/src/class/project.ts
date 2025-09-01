@@ -108,6 +108,125 @@ export default class Project {
     });
   }
 
+  private async outboundCall(broadcastWs?: WebSocketServer): Promise<void> {
+    try {
+      // 步驟一: 檢查專案狀態
+      if (this.action !== 'init' && this.action !== 'active') {
+        logWithTimestamp('專案狀態不符合外撥條件:', this.action);
+        return;
+      }
+
+      logWithTimestamp('當前專案狀態為:', this.action);
+      
+      // 步驟二: 檢查 access_token
+      if (!this.access_token) {
+        logWithTimestamp('當前專案缺少 access_token');
+        return;
+      }
+
+      // 步驟三: 獲取並更新 caller 資訊
+      await this.updateCallerInfo();
+
+      // 步驟四: 廣播專案資訊
+      if (broadcastWs) {
+        await this.broadcastProjectInfo(broadcastWs);
+      }
+
+      // 步驟五: 執行外撥邏輯
+      await this.executeOutboundCalls();
+
+    } catch (error) {
+      errorWithTimestamp('外撥流程發生錯誤:', error);
+      throw error;
+    }
+  }
+
+  private async updateCallerInfo(): Promise<void> {
+    try {
+      const caller = await getCaller(this.access_token!);
+      if (!caller.success) {
+        throw new Error(`獲取呼叫者資訊失敗: ${caller.error}`);
+      }
+
+      const callerInfo = caller.data;
+      logWithTimestamp('呼叫者資訊:', callerInfo);
+
+      // 更新當前專案實例的 caller 資訊
+      this.caller = callerInfo;
+      this.agentQuantity = callerInfo.length;
+
+      // 同步更新到 Redis 暫存中
+      await ProjectManager.updateProjectCaller(this.projectId, callerInfo);
+      logWithTimestamp(`專案 ${this.projectId} 的 caller 資訊已更新到 Redis`);
+      
+    } catch (error) {
+      errorWithTimestamp('更新 caller 資訊失敗:', error);
+      throw error;
+    }
+  }
+
+  private async broadcastProjectInfo(broadcastWs: WebSocketServer): Promise<void> {
+    try {
+      await broadcastAllProjects(broadcastWs);
+    } catch (error) {
+      errorWithTimestamp('廣播所有專案資訊失敗:', error);
+      // 廣播失敗不應該阻止外撥流程，所以這裡不拋出錯誤
+    }
+  }
+
+  private async executeOutboundCalls(): Promise<void> {
+    // 檢查是否有分機
+    if (!this.caller || this.caller.length === 0) {
+      errorWithTimestamp('當前專案沒有分機');
+      return;
+    }
+
+    // 遍歷所有分機進行外撥
+    const callPromises = this.caller.map(caller => this.processCallerOutbound(caller));
+    await Promise.allSettled(callPromises);
+  }
+
+  private async processCallerOutbound(caller: Caller): Promise<void> {
+    try {
+      // 檢查分機是否有設備
+      if (!caller.devices || caller.devices.length === 0) {
+        warnWithTimestamp(`分機 ${caller.dn} 沒有可用設備`);
+        return;
+      }
+
+      const { dn, device_id } = caller.devices[0];
+      const { participants } = caller;
+
+      logWithTimestamp(`處理分機 ${dn} 的外撥邏輯`);
+      console.log('當前分機的 participants:', participants);
+
+      // 檢查分機是否空閒
+      if (!participants || participants.length === 0) {
+        logWithTimestamp(`分機 ${dn} 空閒，可以撥打電話`);
+        // TODO: 這裡應該從名單中獲取下一個要撥打的號碼
+        await this.makeOutboundCall(dn, device_id, "0902213273");
+      } else {
+        warnWithTimestamp(`分機 ${dn} 已有通話中，無法撥打下一通電話`);
+      }
+    } catch (error) {
+      errorWithTimestamp(`處理分機 ${caller.dn} 外撥時發生錯誤:`, error);
+    }
+  }
+
+  private async makeOutboundCall(dn: string, deviceId: string, targetNumber: string): Promise<void> {
+    try {
+      if (!this.access_token) {
+        throw new Error('access_token 為空');
+      }
+
+      await makeCall(this.access_token, dn, deviceId, "outbound", targetNumber);
+      logWithTimestamp(`成功發起外撥: ${dn} -> ${targetNumber}`);
+    } catch (error) {
+      errorWithTimestamp(`外撥失敗 ${dn} -> ${targetNumber}:`, error);
+      throw error;
+    }
+  }
+
   private createNewConnection(resolve: () => void, reject: (error: Error) => void, broadcastWs?: WebSocketServer): void {
     try {
       this.ws_3cx = new WebSocket(`${WS_HOST_3CX}/callcontrol/ws`, {
@@ -121,82 +240,12 @@ export default class Project {
         logWithTimestamp('3CX WebSocket 連接成功');
 
         try {
-          // 步驟一: 從 專案​ ​中​ 判斷 ​專案​的​狀態​
-          if (this.action === 'init' || this.action === 'active') {
-            logWithTimestamp('當前專案狀態為:', this.action);
-            
-            if (!this.access_token) {
-              logWithTimestamp('當前專案缺少 access_token');
-              resolve(); // 即使沒有 token 也要 resolve，讓 WebSocket 連接完成
-              return;
-            }
-
-            if (this.action === 'init' || this.action === 'active') {
-              const caller = await getCaller(this.access_token);
-              if (!caller.success) {
-                logWithTimestamp('獲取呼叫者資訊失敗:', caller.error);
-                resolve(); // 即使獲取呼叫者資訊失敗，WebSocket 連接仍然有效
-                return;
-              }
-              const callerInfo = caller.data;
-              logWithTimestamp('呼叫者資訊:', callerInfo);
-
-              // 更新當前專案實例的 caller 資訊
-              this.caller = callerInfo;
-              this.agentQuantity = callerInfo.length;
-
-              // 同步更新到 Redis 暫存中
-              try {
-                await ProjectManager.updateProjectCaller(this.projectId, callerInfo);
-                logWithTimestamp(`專案 ${this.projectId} 的 caller 資訊已更新到 Redis`);
-              } catch (updateError) {
-                errorWithTimestamp('更新 Redis 中的 caller 資訊失敗:', updateError);
-              }
-            }
-
-            // 將全部專案廣播給所有連線中的 client
-            if (broadcastWs) {             
-              // 廣播所有專案的資訊 - 使用模組化函數
-              try {
-                await broadcastAllProjects(broadcastWs);
-              } catch (broadcastError) {
-                errorWithTimestamp('廣播所有專案資訊失敗:', broadcastError);
-              }
-            }
-
-            // 步驟二: 遍歷專案​分機​資訊 查詢​有​無 participants ​資料
-            if (!this.caller || this.caller.length === 0) {
-              errorWithTimestamp('當前專案沒有分機');
-              return;
-            }
-            this.caller.forEach(async (caller: Caller) => {
-              // 步驟三: 抓到分機資訊進行 makeCall
-              const { dn, device_id } = caller.devices[0]; // 取得第一個設備的資訊
-              if (!this.access_token) {
-                errorWithTimestamp('makeCall 時 access_token 為 null');
-                return
-              };
-              logWithTimestamp(caller);
-              // TODO 目前先單純測試撥打電話 之後要建構抓取名單撥打邏輯
-              const { participants } = caller;
-              console.log('當前分機的 participants:', participants);
-              if (!participants || participants.length === 0) {
-                logWithTimestamp('當前專案沒有參與者可以再撥打下一隻電話');
-                await makeCall(this.access_token, dn, device_id, "outbound", "0902213273");
-                return;
-              } else {
-                warnWithTimestamp('當前分機已有通話中，無法撥打下一通電話');
-                return;
-              }
-            });
-          }
+          // 執行外撥邏輯
+          await this.outboundCall(broadcastWs);
           resolve(); // 成功完成初始化
         } catch (error) {
           errorWithTimestamp('初始化專案時發生錯誤:', error);
-          // 可以選擇是否要 reject 或只是記錄錯誤但繼續
-          resolve(); // 即使獲取呼叫者資訊失敗，WebSocket 連接仍然有效
-          // 或者如果你認為這是致命錯誤：
-          // reject(new Error(`Failed to initialize project: ${error instanceof Error ? error.message : String(error)}`));
+          resolve(); // 即使外撥失敗，WebSocket 連接仍然有效
         }
       });
 
@@ -217,12 +266,10 @@ export default class Project {
             
             // 根據不同的事件類型處理邏輯
             switch (messageObject.event.event_type) {
-              case 0:
-                logWithTimestamp('狀態 1:', messageObject.event);
+              case 0 | 1:
+                logWithTimestamp(`狀態 ${messageObject.event.event_type}:`, messageObject.event);
+                this.outboundCall();
                 break; 
-              case 1:
-                logWithTimestamp('狀態 2:', messageObject.event);
-                break;
               default:
                 logWithTimestamp('未知事件類型:', messageObject.event.event_type);
             }
