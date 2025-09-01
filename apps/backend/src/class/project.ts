@@ -131,7 +131,7 @@ export default class Project {
               return;
             }
 
-            if (this.action === 'active') {
+            if (this.action === 'init' || this.action === 'active') {
               const caller = await getCaller(this.access_token);
               if (!caller.success) {
                 logWithTimestamp('獲取呼叫者資訊失敗:', caller.error);
@@ -178,8 +178,16 @@ export default class Project {
               };
               logWithTimestamp(caller);
               // TODO 目前先單純測試撥打電話 之後要建構抓取名單撥打邏輯
-              console.log(this.access_token, dn, device_id,'開始撥打電話到 0902213273');
-              await makeCall(this.access_token, dn, device_id, "outbound", "0902213273");
+              const { participants } = caller;
+              console.log('當前分機的 participants:', participants);
+              if (!participants || participants.length === 0) {
+                logWithTimestamp('當前專案沒有參與者可以再撥打下一隻電話');
+                await makeCall(this.access_token, dn, device_id, "outbound", "0902213273");
+                return;
+              } else {
+                warnWithTimestamp('當前分機已有通話中，無法撥打下一通電話');
+                return;
+              }
             });
           }
           resolve(); // 成功完成初始化
