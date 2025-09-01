@@ -9,11 +9,9 @@ import { WebSocketServer } from 'ws';
 import { router as bonsaleRouter } from './routes/bonsale';
 
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from './util/timestamp';
-import { get3cxToken } from './services/api/callControl';
 import Project from './class/project';
 import { initRedis, closeRedis } from './services/redis';
 import { ProjectManager } from './class/projectManager';
-import { getCaller } from './services/api/callControl';
 import { broadcastError } from './components/broadcast';
 
 // Load environment variables
@@ -62,85 +60,6 @@ app.use((err: Error, req: express.Request, res: express.Response, _next: express
 // Start server
 const httpServer = createServer(app);
 
-
-// TODO 功能實作區
-// 這邊實作 startOutbound 的功能 之後要搬到其他檔案歸類
-// =================================================================
-
-type ProjectData = {
-  projectId: string;
-  callFlowId: string;
-  client_id: string;
-  client_secret: string;
-};
-
-// 初始化專案
-async function initOutboundProject(projectData: ProjectData) {
-  const { projectId, callFlowId, client_id, client_secret } = projectData;
-
-  // 檢查專案是否已存在
-  const existingProject = await ProjectManager.getProject(projectId);
-  if (existingProject) {
-    logWithTimestamp(`專案 ${projectId} 已存在，更新 token 並返回實例`);
-    
-    // 更新 access token（因為可能已過期）
-    const token = await get3cxToken(client_id, client_secret);
-    
-    if (!token.success) {
-      throw new Error(`Failed to obtain access token: ${token.error?.error || 'Unknown error'}`);
-    }
-    const { access_token } = token.data;
-    
-    // 更新專案實例的 token
-    existingProject.access_token = access_token;
-    
-    // 更新 Redis 中的 token
-    await ProjectManager.updateProjectAccessToken(projectId, access_token);
-    
-    logWithTimestamp(`專案 ${projectId} token 已更新`);
-    return existingProject;
-  }
-
-  const token = await get3cxToken(client_id, client_secret);
-  if (!token.success) {
-    throw new Error(`Failed to obtain access token: ${token.error?.error || 'Unknown error'}`);
-  }
-  
-  const { access_token } = token.data;
-  if (!access_token) {
-    throw new Error('Failed to obtain access token: token is empty');
-  }
-
-  const caller = await getCaller(access_token);
-  if (!caller.success) {
-    throw new Error('Failed to obtain caller information');
-  }
-  const callerData = caller.data;
-  const agentQuantity = caller.data.length;
-
-  const project = new Project(
-    client_id,
-    client_secret,
-    callFlowId,
-    projectId,
-    'init',
-    null,
-    access_token,
-    callerData,
-    agentQuantity
-  );
-
-  // 儲存專案到 Redis
-  await ProjectManager.saveProject(project);
-  
-  logWithTimestamp(`專案 ${projectId} 初始化完成並儲存到 Redis`);
-  return project;
-}
-
-
-
-// =================================================================
-
 // 建立 WebSocket 服務器
 const ws = new WebSocketServer({ server: httpServer });
 
@@ -153,8 +72,8 @@ ws.on('connection', (wsClient) => {
 
       switch (event) {
         case 'startOutbound':
-          // 初始化專案並抓 3CX token，儲存到 Redis
-          const projectInstance = await initOutboundProject(payload.project);
+          // 使用 Project 類的靜態方法初始化專案
+          const projectInstance = await Project.initOutboundProject(payload.project);
           // 連線 3CX WebSocket，並傳入 ws 實例以便廣播
           await projectInstance.create3cxWebSocketConnection(ws);
           break;

@@ -3,12 +3,23 @@ import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from '../util
 import { get3cxToken } from '../services/api/callControl';
 import { ProjectManager } from '../services/projectManager';
 
+/**
+ * Token 管理器類別
+ * 負責處理 JWT token 的解析、驗證、刷新等功能
+ */
 export class TokenManager {
   private clientId: string;
   private clientSecret: string;
   private projectId: string;
   private accessToken: string | null;
 
+  /**
+   * TokenManager 構造函數
+   * @param clientId 3CX 客戶端 ID
+   * @param clientSecret 3CX 客戶端密鑰
+   * @param projectId 專案 ID
+   * @param accessToken 存取權杖
+   */
   constructor(clientId: string, clientSecret: string, projectId: string, accessToken: string | null = null) {
     this.clientId = clientId;
     this.clientSecret = clientSecret;
@@ -18,6 +29,7 @@ export class TokenManager {
 
   /**
    * 獲取當前的 access token
+   * @returns string | null - 當前的存取權杖，如果不存在則返回 null
    */
   getAccessToken(): string | null {
     return this.accessToken;
@@ -25,6 +37,7 @@ export class TokenManager {
 
   /**
    * 更新 access token
+   * @param newToken 新的存取權杖
    */
   updateAccessToken(newToken: string): void {
     this.accessToken = newToken;
@@ -34,6 +47,7 @@ export class TokenManager {
    * 解析 JWT payload
    * @param token JWT token
    * @returns 解析後的 payload 或 null
+   * @private
    */
   private parseJwtPayload(token: string): { exp?: number; [key: string]: unknown } | null {
     try {
@@ -54,8 +68,8 @@ export class TokenManager {
   /**
    * 檢查 token 是否過期
    * @param token JWT token
-   * @param bufferMinutes 緩衝時間（分鐘），提前這麼多時間就認為需要刷新
-   * @returns true 如果 token 已過期或即將過期
+   * @param bufferMinutes 緩衝時間（分鐘），提前這麼多時間就認為需要刷新，預設 5 分鐘
+   * @returns boolean - true 如果 token 已過期或即將過期，false 如果仍有效
    */
   isTokenExpired(token: string, bufferMinutes: number = 5): boolean {
     try {
@@ -90,8 +104,8 @@ export class TokenManager {
 
   /**
    * 檢查並刷新 token
-   * @param bufferMinutes 緩衝時間（分鐘）
-   * @returns true 如果 token 有效，false 如果無法獲得有效 token
+   * @param bufferMinutes 緩衝時間（分鐘），預設 5 分鐘
+   * @returns Promise<boolean> - true 如果 token 有效，false 如果無法獲得有效 token
    */
   async checkAndRefreshToken(bufferMinutes: number = 5): Promise<boolean> {
     try {
@@ -142,7 +156,7 @@ export class TokenManager {
   /**
    * 獲取 token 的剩餘有效時間（分鐘）
    * @param token JWT token
-   * @returns 剩餘時間（分鐘），如果無法解析則返回 0
+   * @returns number - 剩餘時間（分鐘），如果無法解析則返回 0
    */
   getTokenRemainingTime(token: string): number {
     try {
@@ -164,7 +178,7 @@ export class TokenManager {
 
   /**
    * 強制刷新 token
-   * @returns true 如果刷新成功，false 如果失敗
+   * @returns Promise<boolean> - true 如果刷新成功，false 如果失敗
    */
   async forceRefreshToken(): Promise<boolean> {
     try {

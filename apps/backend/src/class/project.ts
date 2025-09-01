@@ -1,7 +1,7 @@
 import { WebSocketServer } from "ws";
 import dotenv from 'dotenv';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from '../util/timestamp';
-import { getCaller, makeCall } from '../services/api/callControl'
+import { getCaller, makeCall, get3cxToken } from '../services/api/callControl'
 import { ProjectManager } from '../services/projectManager';
 import { broadcastAllProjects } from '../components/broadcast';
 import { WebSocketManager } from './webSocketManager';
@@ -56,6 +56,18 @@ export default class Project {
   private wsManager: WebSocketManager | null = null;
   private tokenManager: TokenManager;
 
+  /**
+   * Project 類別構造函數
+   * @param client_id 3CX 客戶端 ID
+   * @param client_secret 3CX 客戶端密鑰
+   * @param callFlowId 呼叫流程 ID
+   * @param projectId 專案 ID
+   * @param action 專案狀態 ('init' | 'active')
+   * @param error 錯誤訊息
+   * @param access_token 存取權杖
+   * @param caller 呼叫者資訊陣列
+   * @param agentQuantity 分機數量
+   */
   constructor(
     client_id: string,
     client_secret: string,
@@ -82,15 +94,104 @@ export default class Project {
     this.tokenManager = new TokenManager(client_id, client_secret, projectId, access_token);
   }
 
+  /**
+   * 初始化外撥專案（靜態方法）
+   * @param projectData 專案資料
+   * @returns Project 實例
+   */
+  static async initOutboundProject(projectData: {
+    projectId: string;
+    callFlowId: string;
+    client_id: string;
+    client_secret: string;
+  }): Promise<Project> {
+    const { projectId, callFlowId, client_id, client_secret } = projectData;
+
+    try {
+      // 檢查專案是否已存在
+      const existingProject = await ProjectManager.getProject(projectId);
+      if (existingProject) {
+        logWithTimestamp(`專案 ${projectId} 已存在，更新 token 並返回實例`);
+        
+        // 使用 TokenManager 來刷新 token
+        const refreshed = await existingProject.forceRefreshToken();
+        if (!refreshed) {
+          throw new Error(`Failed to refresh token for existing project ${projectId}`);
+        }
+        
+        logWithTimestamp(`專案 ${projectId} token 已更新`);
+        return existingProject;
+      }
+
+      // 創建新專案
+      logWithTimestamp(`開始初始化新專案 ${projectId}`);
+      
+      // 獲取 access token
+      const token = await get3cxToken(client_id, client_secret);
+      if (!token.success) {
+        throw new Error(`Failed to obtain access token: ${token.error?.error || 'Unknown error'}`);
+      }
+      
+      const { access_token } = token.data;
+      if (!access_token) {
+        throw new Error('Failed to obtain access token: token is empty');
+      }
+
+      // 獲取呼叫者資訊
+      const caller = await getCaller(access_token);
+      if (!caller.success) {
+        throw new Error('Failed to obtain caller information');
+      }
+      const callerData = caller.data;
+      const agentQuantity = caller.data.length;
+
+      // 創建專案實例
+      const project = new Project(
+        client_id,
+        client_secret,
+        callFlowId,
+        projectId,
+        'init',
+        null,
+        access_token,
+        callerData,
+        agentQuantity
+      );
+
+      // 儲存專案到 Redis
+      await ProjectManager.saveProject(project);
+      
+      logWithTimestamp(`專案 ${projectId} 初始化完成並儲存到 Redis`);
+      return project;
+      
+    } catch (error) {
+      errorWithTimestamp(`初始化專案 ${projectId} 失敗:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * 更新存取權杖
+   * @param newAccessToken 新的存取權杖
+   */
   updateAccessToken(newAccessToken: string): void {
     this.access_token = newAccessToken;
     this.tokenManager.updateAccessToken(newAccessToken);
   }
 
+  /**
+   * 更新專案狀態
+   * @param newAction 新的專案狀態 ('init' | 'active')
+   */
   updateAction(newAction: 'init' | 'active'): void {
     this.action = newAction;
   }
 
+  /**
+   * 建立 3CX WebSocket 連接
+   * @param broadcastWs 廣播 WebSocket 伺服器實例
+   * @returns Promise<void>
+   */
   create3cxWebSocketConnection(broadcastWs?: WebSocketServer): Promise<void> {
     return new Promise(async (resolve, reject) => {
       if (!this.access_token) {
@@ -158,6 +259,11 @@ export default class Project {
     });
   }
 
+  /**
+   * 處理 WebSocket 訊息
+   * @param data 收到的訊息資料 (Buffer 格式)
+   * @private
+   */
   private handleWebSocketMessage(data: Buffer): void {
     try {
       // 將 Buffer 轉換為字符串
@@ -187,6 +293,11 @@ export default class Project {
     }
   }
 
+  /**
+   * 執行外撥邏輯
+   * @param broadcastWs 廣播 WebSocket 伺服器實例
+   * @private
+   */
   private async outboundCall(broadcastWs?: WebSocketServer): Promise<void> {
     try {
       // 步驟一: 檢查專案狀態
@@ -233,6 +344,10 @@ export default class Project {
     }
   }
 
+  /**
+   * 更新呼叫者資訊
+   * @private
+   */
   private async updateCallerInfo(): Promise<void> {
     try {
       const caller = await getCaller(this.access_token!);
@@ -257,6 +372,11 @@ export default class Project {
     }
   }
 
+  /**
+   * 廣播專案資訊
+   * @param broadcastWs 廣播 WebSocket 伺服器實例
+   * @private
+   */
   private async broadcastProjectInfo(broadcastWs: WebSocketServer): Promise<void> {
     try {
       await broadcastAllProjects(broadcastWs);
@@ -266,6 +386,10 @@ export default class Project {
     }
   }
 
+  /**
+   * 執行外撥通話
+   * @private
+   */
   private async executeOutboundCalls(): Promise<void> {
     // 檢查是否有分機
     if (!this.caller || this.caller.length === 0) {
@@ -278,6 +402,11 @@ export default class Project {
     await Promise.allSettled(callPromises);
   }
 
+  /**
+   * 處理單一呼叫者的外撥邏輯
+   * @param caller 呼叫者資訊
+   * @private
+   */
   private async processCallerOutbound(caller: Caller): Promise<void> {
     try {
       // 檢查分機是否有設備
@@ -306,6 +435,14 @@ export default class Project {
     }
   }
 
+  /**
+   * 發起外撥通話
+   * @param dn 分機號碼
+   * @param deviceId 設備 ID
+   * @param targetNumber 目標電話號碼
+   * @param delayMs 延遲時間（毫秒），預設 1000ms
+   * @private
+   */
   private async makeOutboundCall(dn: string, deviceId: string, targetNumber: string, delayMs: number = 1000): Promise<void> {
     try {
       if (!this.access_token) {
@@ -324,6 +461,12 @@ export default class Project {
     }
   }
 
+  /**
+   * 延遲執行
+   * @param ms 延遲時間（毫秒）
+   * @returns Promise<void>
+   * @private
+   */
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -371,6 +514,10 @@ export default class Project {
     }
   }
 
+  /**
+   * 中斷 3CX WebSocket 連接
+   * @returns Promise<void>
+   */
   disconnect3cxWebSocket(): Promise<void> {
     if (this.wsManager) {
       return this.wsManager.disconnect();
@@ -378,12 +525,18 @@ export default class Project {
     return Promise.resolve();
   }
 
-  // 檢查連接狀態的方法
+  /**
+   * 檢查 WebSocket 連接狀態
+   * @returns boolean - true 如果已連接，false 如果未連接
+   */
   isWebSocketConnected(): boolean {
     return this.wsManager?.isConnected() ?? false;
   }
 
-  // 獲取連接狀態的方法
+  /**
+   * 獲取 WebSocket 連接狀態
+   * @returns string - 連接狀態字串
+   */
   getWebSocketState(): string {
     return this.wsManager?.getState() ?? 'DISCONNECTED';
   }
@@ -391,6 +544,7 @@ export default class Project {
   // Token 相關的便捷方法
   /**
    * 獲取 token 的剩餘有效時間（分鐘）
+   * @returns number - 剩餘時間（分鐘）
    */
   getTokenRemainingTime(): number {
     if (!this.access_token) return 0;
@@ -399,6 +553,7 @@ export default class Project {
 
   /**
    * 強制刷新 token
+   * @returns Promise<boolean> - true 如果刷新成功，false 如果失敗
    */
   async forceRefreshToken(): Promise<boolean> {
     const result = await this.tokenManager.forceRefreshToken();
@@ -414,6 +569,8 @@ export default class Project {
 
   /**
    * 檢查 token 是否即將過期
+   * @param bufferMinutes 緩衝時間（分鐘），預設 5 分鐘
+   * @returns boolean - true 如果即將過期，false 如果仍有效
    */
   isTokenExpiringSoon(bufferMinutes: number = 5): boolean {
     if (!this.access_token) return true;
