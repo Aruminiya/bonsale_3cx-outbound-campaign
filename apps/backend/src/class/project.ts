@@ -204,7 +204,8 @@ export default class Project {
       if (!participants || participants.length === 0) {
         logWithTimestamp(`分機 ${dn} 空閒，可以撥打電話`);
         // TODO: 這裡應該從名單中獲取下一個要撥打的號碼
-        await this.makeOutboundCall(dn, device_id, "0902213273");
+        // 可以根據需要調整延遲時間，例如 2000ms (2秒)
+        await this.makeOutboundCall(dn, device_id, "0902213273", 2000);
       } else {
         warnWithTimestamp(`分機 ${dn} 已有通話中，無法撥打下一通電話`);
       }
@@ -213,11 +214,15 @@ export default class Project {
     }
   }
 
-  private async makeOutboundCall(dn: string, deviceId: string, targetNumber: string): Promise<void> {
+  private async makeOutboundCall(dn: string, deviceId: string, targetNumber: string, delayMs: number = 1000): Promise<void> {
     try {
       if (!this.access_token) {
         throw new Error('access_token 為空');
       }
+
+      // 添加延遲
+      logWithTimestamp(`等待 ${delayMs}ms 後撥打電話: ${dn} -> ${targetNumber}`);
+      await this.delay(delayMs);
 
       await makeCall(this.access_token, dn, deviceId, "outbound", targetNumber);
       logWithTimestamp(`成功發起外撥: ${dn} -> ${targetNumber}`);
@@ -225,6 +230,10 @@ export default class Project {
       errorWithTimestamp(`外撥失敗 ${dn} -> ${targetNumber}:`, error);
       throw error;
     }
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   private createNewConnection(resolve: () => void, reject: (error: Error) => void, broadcastWs?: WebSocketServer): void {
