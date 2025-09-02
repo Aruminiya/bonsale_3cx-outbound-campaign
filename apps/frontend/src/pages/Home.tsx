@@ -72,7 +72,6 @@ type WebSocketProject = {
     }>;
   }>;
   access_token: string;
-  ws_connected: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -579,16 +578,6 @@ export default function Home() {
                                   variant="outlined"
                                   size="small"
                                   sx={{ fontSize: '0.7rem' }}
-                                />
-                                <Chip
-                                  label={`WebSocket: ${projectWsData.ws_connected ? '已連接' : '未連接'}`}
-                                  size="small"
-                                  sx={{ 
-                                    fontSize: '0.7rem',
-                                    color: 'white',
-                                    bgcolor: (theme) => 
-                                      projectWsData.ws_connected ? theme.palette.success.main : theme.palette.error.main
-                                  }}
                                 />
                               </Stack>
                             </Box>

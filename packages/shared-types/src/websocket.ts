@@ -54,7 +54,6 @@ export interface ProjectData {
   agentQuantity: number;
   caller: unknown;
   access_token: string | null;
-  ws_connected: boolean;
   createdAt: string;
   updatedAt: string;
 }

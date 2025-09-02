@@ -534,22 +534,6 @@ export default class Project {
     return Promise.resolve();
   }
 
-  /**
-   * 檢查 WebSocket 連接狀態
-   * @returns boolean - true 如果已連接，false 如果未連接
-   */
-  isWebSocketConnected(): boolean {
-    return this.wsManager?.isConnected() ?? false;
-  }
-
-  /**
-   * 獲取 WebSocket 連接狀態
-   * @returns string - 連接狀態字串
-   */
-  getWebSocketState(): string {
-    return this.wsManager?.getState() ?? 'DISCONNECTED';
-  }
-
   // Token 相關的便捷方法
   /**
    * 獲取 token 的剩餘有效時間（分鐘）

@@ -78,7 +78,6 @@
         agentQuantity: number;
         caller: unknown;
         access_token: string | null;  // 隱藏敏感資訊顯示為 '***'
-        ws_connected: boolean;
         createdAt: string;
         updatedAt: string;
       }

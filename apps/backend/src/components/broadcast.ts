@@ -30,7 +30,6 @@ export async function broadcastAllProjects(
           agentQuantity: p.agentQuantity,
           caller: p.caller,
           access_token: p.access_token ? '***' : null, // 隱藏敏感資訊
-          ws_connected: p.isWebSocketConnected(), // 添加 WebSocket 連接狀態
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         })),
