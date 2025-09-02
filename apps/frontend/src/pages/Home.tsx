@@ -1,6 +1,6 @@
 // import InfoOutlineIcon from '@mui/icons-material/InfoOutline';
 // import { useNavigate } from 'react-router-dom'
-import { Fragment, useRef, useState, useEffect } from 'react';
+import { Fragment, useRef, useState, useEffect, useMemo } from 'react';
 import { 
   Table,
   TableBody,
@@ -39,6 +39,56 @@ type SendMessagePayload = {
       error: string | null;
     };
     // 可以根據需要添加其他類型的 payload
+  };
+};
+
+// WebSocket 訊息中的專案資料結構
+type WebSocketProject = {
+  projectId: string;
+  callFlowId: string;
+  action: string;
+  client_id: string;
+  agentQuantity: number;
+  caller: Array<{
+    dn: string;
+    type: string;
+    devices: Array<{
+      dn: string;
+      device_id: string;
+      user_agent: string;
+    }>;
+    participants: Array<{
+      id: number;
+      status: string;
+      party_caller_name: string;
+      party_dn: string;
+      party_caller_id: string;
+      device_id: string;
+      party_dn_type: string;
+      direct_control: boolean;
+      callid: number;
+      legid: number;
+      dn: string;
+    }>;
+  }>;
+  access_token: string;
+  ws_connected: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type WebSocketMessage = {
+  event: string;
+  payload: {
+    allProjects: WebSocketProject[];
+    stats: {
+      totalProjects: number;
+      activeProjects: string[];
+      initProjects: number;
+      activeProjectsCount: number;
+    };
+    timestamp: string;
+    triggeredBy: string;
   };
 };
 
@@ -114,6 +164,33 @@ export default function Home() {
     if (box.scrollTop + box.clientHeight >= box.scrollHeight - 10) { // 10px buffer
       loadMore();
     }
+  };
+
+  // 解析 WebSocket 訊息
+  const parsedWsMessage = useMemo((): WebSocketMessage | null => {
+    if (!wsMessage) return null;
+    try {
+      return JSON.parse(wsMessage);
+    } catch (error) {
+      console.error('解析 WebSocket 訊息失敗:', error);
+      return null;
+    }
+  }, [wsMessage]);
+
+  // 處理專案通話訊息的映射
+  const projectCallMessageMap = useMemo(() => {
+    if (!parsedWsMessage?.payload?.allProjects) return new Map<string, WebSocketProject>();
+    
+    const map = new Map<string, WebSocketProject>();
+    parsedWsMessage.payload.allProjects.forEach((project: WebSocketProject) => {
+      map.set(project.projectId, project);
+    });
+    return map;
+  }, [parsedWsMessage]);
+
+  // 根據專案 ID 獲取通話訊息
+  const getProjectCallMessage = (projectId: string): WebSocketProject | undefined => {
+    return projectCallMessageMap.get(projectId);
   };
  
   // 開始撥打電話
@@ -287,7 +364,11 @@ export default function Home() {
                     key={item.projectId}
                     sx={{
                       backgroundColor: item.callStatus === 4 ? '#f5f5f5' : item.callStatus === 3 ? '#FFF4F4' : 'inherit',
-                      height: item.callStatus !== 0 ? '250px' : '100px',
+                      minHeight: '120px',
+                      '& .MuiTableCell-root': {
+                        verticalAlign: 'top',
+                        paddingY: '16px'
+                      },
                       transition: 'all 0.3s ease-in-out'
                     }}
                   >
@@ -341,111 +422,179 @@ export default function Home() {
                         </IconButton> 
                       </Stack>
                     </TableCell>
-                    <TableCell align='left'>
-                      <Stack>
-                        <Chip label= '準備撥打' size="small"/>
-                        {/* <Chip
-                          label={
-                            mainActionType(item.projectCallState) === 'init' ? '準備撥打' :
-                            mainActionType(item.projectCallState) === 'active' ? '準備撥打' : 
-                            mainActionType(item.projectCallState) === 'start' ? '開始撥號' :
-                            mainActionType(item.projectCallState) === 'pause' ? '暫停撥打' :
-                            mainActionType(item.projectCallState) === 'stop' ? '停止撥打' :
-                            mainActionType(item.projectCallState) === 'waiting' ? '等待撥打' : 
-                            mainActionType(item.projectCallState) === 'error' ? 
-                            item.projectCallState === 'error - notAvailable' ? '人員勿擾' :
-                            isAutoRestart ? '重新嘗試' : '撥打失敗' :
-                            mainActionType(item.projectCallState) === 'recording' ? '撥打記錄' :
-                            mainActionType(item.projectCallState) === 'calling' ? '撥打中' : 
-                            mainActionType(item.projectCallState) === 'finish' ? '撥打完成' : 
-                            mainActionType(item.projectCallState)
-                          }
+                    <TableCell align='center'>
+                      <Stack spacing={1} alignItems="center">
+                        <Chip 
+                          label="準備撥打" 
                           size="small"
-                          sx={{ 
-                            width: '80px',
-                            marginBottom: '4px',
-                            color: () => 
-                              mainActionType(item.projectCallState) === 'calling' || 
-                              mainActionType(item.projectCallState) === 'finish' 
-                              ? 'white' : 'black',
-                            bgcolor: (theme) => 
-                              mainActionType(item.projectCallState) === 'active' ? theme.palette.warning.color50 :
-                              mainActionType(item.projectCallState) === 'calling' ? theme.palette.warning.main :
-                              mainActionType(item.projectCallState) === 'waiting' ? theme.palette.warning.color300 :
-                              mainActionType(item.projectCallState) === 'error' ?
-                              item.projectCallState === 'error - notAvailable' ? theme.palette.warning.color300 :
-                              isAutoRestart ? theme.palette.error.color100 : theme.palette.error.main :
-                              mainActionType(item.projectCallState) === 'recording' ? theme.palette.success.color300 :
-                              mainActionType(item.projectCallState) === 'finish' ? theme.palette.success.color700 :
-                              'default'
-                          }}
-                        /> */}
+                          variant="outlined"
+                          sx={{ fontSize: '0.7rem' }}
+                        />
+                        {/* 顯示 WebSocket 中的動態狀態 */}
+                        {(() => {
+                          const projectWsData = getProjectCallMessage(item.projectId);
+                          if (projectWsData) {
+                            const actionLabel = projectWsData.action === 'init' ? '初始化' : 
+                                              projectWsData.action === 'active' ? '執行中' : 
+                                              projectWsData.action;
+                            return (
+                              <Chip
+                                label={actionLabel} 
+                                size="small" 
+                                sx={{ 
+                                  fontSize: '0.7rem',
+                                  fontWeight: 'bold',
+                                  bgcolor: (theme) => 
+                                    projectWsData.action === 'init' ? theme.palette.warning.main :
+                                    projectWsData.action === 'active' ? theme.palette.success.main :
+                                    theme.palette.primary.main,
+                                  color: 'white'
+                                }}
+                              />
+                            );
+                          }
+                          return null;
+                        })()}
                       </Stack>
                     </TableCell>
                     <TableCell align='left'>
-                      {item.projectCallData ? (
-                        <Stack>
-                          <Chip
-                            label={`Phone: ${item.projectCallData.phone || '-'}`}
-                            variant="outlined"
-                            size="small"
-                            sx={{ marginBottom: '4px' }}
-                          />
-                          {item.projectCallData.activeCall && (
-                            <Stack sx={{ marginTop: '8px', width: '100%' }}>
-                              <Chip
-                                label={`Caller: ${item.projectCallData.activeCall.Caller || '-'}`}
-                                variant="filled"
-                                size="small"
-                                sx={{ 
-                                  marginBottom: '4px',
-                                  bgcolor: (theme) => theme.palette.primary.color100,
+                      {(() => {
+                        const projectWsData = getProjectCallMessage(item.projectId);
+                        
+                        if (!projectWsData?.caller || projectWsData.caller.length === 0) {
+                          return <Chip label="無分機資料" variant="outlined" size="small" />;
+                        }
+
+                        return (
+                          <Stack spacing={2}>
+                            {projectWsData.caller.map((caller, callerIndex) => (
+                              <Box 
+                                key={`${caller.dn}-${callerIndex}`}
+                                sx={{
+                                  border: '1px solid #e0e0e0',
+                                  borderRadius: '8px',
+                                  padding: '12px',
+                                  backgroundColor: '#fafafa'
                                 }}
-                              />
-                              <Chip
-                                label={`Callee: ${item.projectCallData.activeCall.Callee || '-'}`}
-                                variant="filled"
-                                size="small"
-                                sx={{ 
-                                  marginBottom: '4px',
-                                  bgcolor: (theme) => theme.palette.primary.color50,
-                                }}
-                              />
-                              <Chip
-                                label={`Status: ${item.projectCallData.activeCall.Status || '-'}`}
-                                color={item.projectCallData.activeCall.Status === 'Routing' ? 'primary' : 'default'}
-                                size="small"
-                                sx={{ 
-                                  marginBottom: '4px',
-                                  bgcolor: (theme) => 
-                                    item.projectCallData?.activeCall?.Status === 'Routing' ? theme.palette.warning.main :
-                                    item.projectCallData?.activeCall?.Status === 'Talking' ? theme.palette.success.color700 :
-                                    theme.palette.primary.color50
-                                }}
-                              />
-                              <Chip
-                                label={`Last Change: ${new Date(item.projectCallData.activeCall.LastChangeStatus).toLocaleString() || '-'}`}
-                                variant="outlined"
-                                size="small"
-                                sx={{ marginBottom: '4px' }}
-                              />
-                              <Chip
-                                label={`Established At: ${new Date(item.projectCallData.activeCall.EstablishedAt).toLocaleString() || '-'}`}
-                                variant="outlined"
-                                size="small"
-                                sx={{ marginBottom: '4px' }}
-                              />
-                              <Chip
-                                label={`Server Time: ${new Date(item.projectCallData.activeCall.ServerNow).toLocaleString() || '-'}`}
-                                variant="outlined"
-                                size="small"
-                              />
-                            </Stack>
-                          )}
-                        </Stack>
-                      ) : (
-                        <Chip label="No Data" variant="outlined" size="small" />
-                      )}
+                              >
+                                {/* 分機標題 */}
+                                <Stack direction="row" spacing={1} sx={{ marginBottom: '8px' }}>
+                                  <Chip
+                                    label={`分機 ${caller.dn}`}
+                                    variant="filled"
+                                    size="small"
+                                    sx={{ 
+                                      fontWeight: 'bold',
+                                      bgcolor: (theme) => theme.palette.primary.main,
+                                      color: 'white'
+                                    }}
+                                  />
+                                  {caller.devices?.map((device, deviceIndex) => (
+                                    <Chip
+                                      key={`device-${deviceIndex}`}
+                                      label={`Device: ${device.dn}`}
+                                      variant="outlined"
+                                      size="small"
+                                      sx={{ fontSize: '0.7rem' }}
+                                    />
+                                  ))}
+                                </Stack>
+
+                                {/* 通話狀態 */}
+                                {caller.participants?.length > 0 ? (
+                                  <Stack spacing={1}>
+                                    <Box sx={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#666' }}>
+                                      通話中：
+                                    </Box>
+                                    {caller.participants.map((participant, participantIndex) => (
+                                      <Box 
+                                        key={`participant-${participantIndex}`}
+                                        sx={{
+                                          backgroundColor: 'white',
+                                          padding: '8px',
+                                          borderRadius: '4px',
+                                          border: '1px solid #ddd'
+                                        }}
+                                      >
+                                        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: '4px' }}>
+                                          <Chip
+                                            label={`狀態: ${participant.status}`}
+                                            size="small"
+                                            sx={{ 
+                                              bgcolor: (theme) => 
+                                                participant.status === 'Dialing' ? theme.palette.warning.main :
+                                                participant.status === 'Connected' ? theme.palette.success.main :
+                                                theme.palette.primary.main,
+                                              color: 'white',
+                                              fontWeight: 'bold'
+                                            }}
+                                          />
+                                          {participant.party_caller_id && (
+                                            <Chip
+                                              label={`撥打: ${participant.party_caller_id}`}
+                                              variant="outlined"
+                                              size="small"
+                                              sx={{ fontSize: '0.7rem' }}
+                                            />
+                                          )}
+                                          <Chip
+                                            label={`Call ID: ${participant.callid}`}
+                                            variant="outlined"
+                                            size="small"
+                                            sx={{ fontSize: '0.7rem' }}
+                                          />
+                                        </Stack>
+                                      </Box>
+                                    ))}
+                                  </Stack>
+                                ) : (
+                                  <Box sx={{ textAlign: 'center', padding: '8px' }}>
+                                    <Chip
+                                      label="分機空閒"
+                                      size="small"
+                                      sx={{ 
+                                        bgcolor: (theme) => theme.palette.success.color300,
+                                        color: 'white',
+                                        fontWeight: 'bold'
+                                      }}
+                                    />
+                                  </Box>
+                                )}
+                              </Box>
+                            ))}
+                            
+                            {/* 專案統計資訊 */}
+                            <Box 
+                              sx={{ 
+                                marginTop: '12px', 
+                                padding: '8px', 
+                                backgroundColor: '#e3f2fd', 
+                                borderRadius: '6px',
+                                border: '1px solid #2196f3'
+                              }}
+                            >
+                              <Stack direction="row" spacing={1} sx={{ justifyContent: 'center' }}>
+                                <Chip
+                                  label={`分機數: ${projectWsData.agentQuantity}`}
+                                  variant="outlined"
+                                  size="small"
+                                  sx={{ fontSize: '0.7rem' }}
+                                />
+                                <Chip
+                                  label={`WebSocket: ${projectWsData.ws_connected ? '已連接' : '未連接'}`}
+                                  size="small"
+                                  sx={{ 
+                                    fontSize: '0.7rem',
+                                    color: 'white',
+                                    bgcolor: (theme) => 
+                                      projectWsData.ws_connected ? theme.palette.success.main : theme.palette.error.main
+                                  }}
+                                />
+                              </Stack>
+                            </Box>
+                          </Stack>
+                        );
+                      })()}
                     </TableCell>
                   </TableRow>
                 </Fragment>
