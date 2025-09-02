@@ -27,70 +27,6 @@ import useProjectOutboundData from '../hooks/useProjectOutboundData';
 
 import useUpdateBonsaleProject from '../hooks/api/useUpdateBonsaleProject';
 
-type SendMessagePayload = {
-  event: string;
-  payload: {
-    project?: {
-      callFlowId: string;
-      projectId: string;
-      client_id: string;
-      client_secret: string;
-      action: string;
-      error: string | null;
-    };
-    // 可以根據需要添加其他類型的 payload
-  };
-};
-
-// WebSocket 訊息中的專案資料結構
-type WebSocketProject = {
-  projectId: string;
-  callFlowId: string;
-  action: string;
-  client_id: string;
-  agentQuantity: number;
-  caller: Array<{
-    dn: string;
-    type: string;
-    devices: Array<{
-      dn: string;
-      device_id: string;
-      user_agent: string;
-    }>;
-    participants: Array<{
-      id: number;
-      status: string;
-      party_caller_name: string;
-      party_dn: string;
-      party_caller_id: string;
-      device_id: string;
-      party_dn_type: string;
-      direct_control: boolean;
-      callid: number;
-      legid: number;
-      dn: string;
-    }>;
-  }>;
-  access_token: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-type WebSocketMessage = {
-  event: string;
-  payload: {
-    allProjects: WebSocketProject[];
-    stats: {
-      totalProjects: number;
-      activeProjects: string[];
-      initProjects: number;
-      activeProjectsCount: number;
-    };
-    timestamp: string;
-    triggeredBy: string;
-  };
-};
-
 export default function Home() {
   // WebSocket 狀態
   const [wsStatus, setWsStatus] = useState<'connecting'|'open'|'closed'|'error'>('connecting');
@@ -107,8 +43,10 @@ export default function Home() {
   };
 
   // 連線 WebSocket
-  // 注意：正式環境請改成後端 ws 服務實際網址
-  const WS_URL = 'ws://localhost:4020';
+  const WS_PROTOCOL = import.meta.env.VITE_WS_PROTOCOL;
+  const DOMAIN = import.meta.env.VITE_DOMAIN;
+  const PORT = import.meta.env.VITE_API_PORT;
+  const WS_URL = `${WS_PROTOCOL}://${DOMAIN}:${PORT}`;
 
   // 只在元件掛載時執行一次
   useEffect(() => {

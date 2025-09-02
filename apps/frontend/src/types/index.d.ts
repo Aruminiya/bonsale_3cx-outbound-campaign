@@ -1,5 +1,4 @@
 declare global {
-
   interface ProjectOutboundDataType {
     appId: string
     appSecret: string
@@ -29,7 +28,6 @@ declare global {
     } | null
     isEnable: boolean
   }
-
   interface ProjectCustomersDesc {
     projectId: string;
     project: {
@@ -337,6 +335,69 @@ declare global {
       ServerNow: string;
     };
   }
+
+  interface SendMessagePayload {
+    event: string;
+    payload: {
+      project?: {
+        callFlowId: string;
+        projectId: string;
+        client_id: string;
+        client_secret: string;
+        action: string;
+        error: string | null;
+      };
+      // 可以根據需要添加其他類型的 payload
+    };
+  };
+
+  // WebSocket 訊息中的專案資料結構
+  interface WebSocketProject {
+    projectId: string;
+    callFlowId: string;
+    action: string;
+    client_id: string;
+    agentQuantity: number;
+    caller: Array<{
+      dn: string;
+      type: string;
+      devices: Array<{
+        dn: string;
+        device_id: string;
+        user_agent: string;
+      }>;
+      participants: Array<{
+        id: number;
+        status: string;
+        party_caller_name: string;
+        party_dn: string;
+        party_caller_id: string;
+        device_id: string;
+        party_dn_type: string;
+        direct_control: boolean;
+        callid: number;
+        legid: number;
+        dn: string;
+      }>;
+    }>;
+    access_token: string;
+    createdAt: string;
+    updatedAt: string;
+  };
+  interface WebSocketMessage {
+    event: string;
+    payload: {
+      allProjects: WebSocketProject[];
+      stats: {
+        totalProjects: number;
+        activeProjects: string[];
+        initProjects: number;
+        activeProjectsCount: number;
+      };
+      timestamp: string;
+      triggeredBy: string;
+    };
+  };
 
   type BonsaleWebHook =
     | {
