@@ -274,20 +274,17 @@ export default class Project {
       // 嘗試解析 JSON
       const messageObject = JSON.parse(messageString);
 
-      // 您可以根據事件類型進行不同的處理
-      if (messageObject.event.event_type) {
-        // 根據不同的事件類型處理邏輯
-        switch (messageObject.event.event_type) {
-          case 0:
-          case 1:
-            logWithTimestamp(`狀態 ${messageObject.event.event_type}:`, messageObject.event);
+      // 根據不同的事件類型處理邏輯
+      switch (messageObject.event.event_type) {
+        case 0:
+        case 1:
+          logWithTimestamp(`狀態 ${messageObject.event.event_type}:`, messageObject.event);
 
-            // 最後執行外撥邏輯
-            await this.outboundCall(broadcastWs);
-            break; 
-          default:
-            logWithTimestamp('未知事件類型:', messageObject.event.event_type);
-        }
+          // 最後執行外撥邏輯
+          await this.outboundCall(broadcastWs);
+          break; 
+        default:
+          logWithTimestamp('未知事件類型:', messageObject.event.event_type);
       }
       
     } catch (error) {
@@ -564,5 +561,45 @@ export default class Project {
   isTokenExpiringSoon(bufferMinutes: number = 5): boolean {
     if (!this.access_token) return true;
     return this.tokenManager.isTokenExpired(this.access_token, bufferMinutes);
+  }
+
+  /**
+   * 停止外撥專案（靜態方法）
+   * @param projectData 專案資料
+   * @param activeProjects 活躍專案實例映射
+   * @param ws WebSocket服務器實例（用於廣播）
+   * @returns Promise<boolean> - true 如果成功停止，false 如果失敗
+   */
+  static async stopOutboundProject(
+    projectData: { projectId: string },
+    activeProjects: Map<string, Project>,
+    ws: WebSocketServer
+  ): Promise<boolean> {
+    try {
+      const { projectId } = projectData;
+      
+      // 找到正在運行的專案實例（有活躍WebSocket連接的）
+      const runningProject = activeProjects.get(projectId);
+      if (runningProject) {
+        // 斷開正在運行的專案的 3CX WebSocket 連接
+        await runningProject.disconnect3cxWebSocket();
+        // 從活躍專案Map中移除
+        activeProjects.delete(projectId);
+        logWithTimestamp(`專案 ${projectId} 的 WebSocket 連接已斷開`);
+      } else {
+        warnWithTimestamp(`未找到活躍的專案實例: ${projectId}`);
+      }
+      
+      // 移除專案資料
+      await ProjectManager.removeProject(projectId);
+      
+      // 廣播更新給前端
+      broadcastAllProjects(ws);
+      
+      return true;
+    } catch (error) {
+      errorWithTimestamp('停止外撥專案失敗:', error);
+      return false;
+    }
   }
 }

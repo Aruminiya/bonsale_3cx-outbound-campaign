@@ -11,7 +11,6 @@ import { router as bonsaleRouter } from './routes/bonsale';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from './util/timestamp';
 import Project from './class/project';
 import { initRedis, closeRedis } from './services/redis';
-import { ProjectManager } from './class/projectManager';
 import { broadcastAllProjects, broadcastError } from './components/broadcast';
 
 // Load environment variables
@@ -85,19 +84,11 @@ ws.on('connection', (wsClient) => {
           break;
         case 'stopOutbound':
           logWithTimestamp('停止 外撥事件:', payload.project);
-          // 找到正在運行的專案實例（有活躍WebSocket連接的）
-          const runningProject = activeProjects.get(payload.project.projectId);
-          if (runningProject) {
-            // 斷開正在運行的專案的 3CX WebSocket 連接
-            await runningProject.disconnect3cxWebSocket();
-            // 從活躍專案Map中移除
-            activeProjects.delete(payload.project.projectId);
-            logWithTimestamp(`專案 ${payload.project.projectId} 的 WebSocket 連接已斷開`);
-          } else {
-            warnWithTimestamp(`未找到活躍的專案實例: ${payload.project.projectId}`);
+          // 使用 Project 類的靜態方法停止外撥專案
+          const stopSuccess = await Project.stopOutboundProject(payload.project, activeProjects, ws);
+          if (!stopSuccess) {
+            warnWithTimestamp(`停止專案 ${payload.project.projectId} 失敗`);
           }
-          // 移除專案資料
-          await ProjectManager.removeProject(payload.project.projectId);
           break;
         default:
           warnWithTimestamp('未知事件:', event);
