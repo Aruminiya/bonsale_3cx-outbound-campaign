@@ -230,7 +230,9 @@ export default class Project {
               }
             },
             onMessage: (data) => {
-              this.handleWebSocketMessage(data);
+              if (broadcastWs) {
+                this.handleWebSocketMessage(broadcastWs, data);
+              }
             },
             onError: (error) => {
               errorWithTimestamp('3CX WebSocket 錯誤:', error);
@@ -264,22 +266,28 @@ export default class Project {
    * @param data 收到的訊息資料 (Buffer 格式)
    * @private
    */
-  private handleWebSocketMessage(data: Buffer): void {
+  private async handleWebSocketMessage(broadcastWs: WebSocketServer, data: Buffer): Promise<void> {
     try {
       // 將 Buffer 轉換為字符串
       const messageString = data.toString('utf8');
       
       // 嘗試解析 JSON
       const messageObject = JSON.parse(messageString);
-      
+
+      // 只要接收到訊息 就執行外撥邏輯
+      logWithTimestamp(`狀態 ${messageObject.event.event_type}:`, messageObject.event);
+      await this.outboundCall(broadcastWs);
+
       // 您可以根據事件類型進行不同的處理
-      if (messageObject.event && messageObject.event.event_type) {
+      if (messageObject.event.event_type) {
         // 根據不同的事件類型處理邏輯
         switch (messageObject.event.event_type) {
           case 0:
           case 1:
             logWithTimestamp(`狀態 ${messageObject.event.event_type}:`, messageObject.event);
-            this.outboundCall();
+
+            // 最後執行外撥邏輯
+            await this.outboundCall(broadcastWs);
             break; 
           default:
             logWithTimestamp('未知事件類型:', messageObject.event.event_type);
@@ -296,6 +304,7 @@ export default class Project {
   /**
    * 執行外撥邏輯
    * @param broadcastWs 廣播 WebSocket 伺服器實例
+   * @param updateCaller 是否更新 caller 資訊，預設為 true
    * @private
    */
   private async outboundCall(broadcastWs?: WebSocketServer): Promise<void> {
@@ -324,7 +333,7 @@ export default class Project {
       if (currentToken && currentToken !== this.access_token) {
         this.access_token = currentToken;
         // Token 已更新，需要重新建立 WebSocket 連接
-        await this.handleTokenUpdateWebSocketReconnect();
+        await this.handleTokenUpdateWebSocketReconnect(broadcastWs);
       }
 
       // 步驟三: 獲取並更新 caller 資訊
@@ -354,7 +363,6 @@ export default class Project {
       if (!caller.success) {
         throw new Error(`獲取呼叫者資訊失敗: ${caller.error}`);
       }
-
       const callerInfo = caller.data;
       logWithTimestamp('呼叫者資訊:', callerInfo);
 
@@ -418,9 +426,6 @@ export default class Project {
       const { dn, device_id } = caller.devices[0];
       const { participants } = caller;
 
-      logWithTimestamp(`處理分機 ${dn} 的外撥邏輯`);
-      console.log('當前分機的 participants:', participants);
-
       // 檢查分機是否空閒
       if (!participants || participants.length === 0) {
         logWithTimestamp(`分機 ${dn} 空閒，可以撥打電話`);
@@ -473,8 +478,10 @@ export default class Project {
 
   /**
    * 處理 token 更新後的 WebSocket 重連
+   * @param broadcastWs 廣播 WebSocket 伺服器實例 (可選)
+   * @private
    */
-  private async handleTokenUpdateWebSocketReconnect(): Promise<void> {
+  private async handleTokenUpdateWebSocketReconnect(broadcastWs?: WebSocketServer): Promise<void> {
     if (this.wsManager && this.wsManager.isConnected() && this.access_token) {
       try {
         logWithTimestamp('Token 已更新，重新建立 WebSocket 連接');
@@ -496,7 +503,9 @@ export default class Project {
               logWithTimestamp('3CX WebSocket 重新連接成功（token 更新後）');
             },
             onMessage: (data) => {
-              this.handleWebSocketMessage(data);
+              if (broadcastWs) {
+                this.handleWebSocketMessage(broadcastWs, data);
+              }
             },
             onError: (error) => {
               errorWithTimestamp('3CX WebSocket 錯誤:', error);

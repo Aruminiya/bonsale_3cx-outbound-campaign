@@ -12,7 +12,7 @@ import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from './util/
 import Project from './class/project';
 import { initRedis, closeRedis } from './services/redis';
 import { ProjectManager } from './class/projectManager';
-import { broadcastError } from './components/broadcast';
+import { broadcastAllProjects, broadcastError } from './components/broadcast';
 
 // Load environment variables
 dotenv.config();
@@ -65,6 +65,7 @@ const ws = new WebSocketServer({ server: httpServer });
 
 ws.on('connection', (wsClient) => {
   logWithTimestamp('🔌 WebSocket client connected');
+  broadcastAllProjects(ws);
 
   wsClient.on('message', async (message) => {
     try {
