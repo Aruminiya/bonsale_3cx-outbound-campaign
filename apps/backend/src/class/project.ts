@@ -274,10 +274,6 @@ export default class Project {
       // 嘗試解析 JSON
       const messageObject = JSON.parse(messageString);
 
-      // 只要接收到訊息 就執行外撥邏輯
-      logWithTimestamp(`狀態 ${messageObject.event.event_type}:`, messageObject.event);
-      await this.outboundCall(broadcastWs);
-
       // 您可以根據事件類型進行不同的處理
       if (messageObject.event.event_type) {
         // 根據不同的事件類型處理邏輯
