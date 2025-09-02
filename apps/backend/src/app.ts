@@ -63,6 +63,9 @@ const httpServer = createServer(app);
 // 建立 WebSocket 服務器
 const ws = new WebSocketServer({ server: httpServer });
 
+// 輕量級管理：只維護活躍專案實例的引用（用於正確停止）
+const activeProjects = new Map<string, Project>();
+
 ws.on('connection', (wsClient) => {
   logWithTimestamp('🔌 WebSocket client connected');
   broadcastAllProjects(ws);
@@ -75,12 +78,25 @@ ws.on('connection', (wsClient) => {
         case 'startOutbound':
           // 使用 Project 類的靜態方法初始化專案
           const projectInstance = await Project.initOutboundProject(payload.project);
+          // 將活躍的專案實例保存到Map中（這樣才能正確停止WebSocket連接）
+          activeProjects.set(payload.project.projectId, projectInstance);
           // 連線 3CX WebSocket，並傳入 ws 實例以便廣播
           await projectInstance.create3cxWebSocketConnection(ws);
           break;
         case 'stopOutbound':
           logWithTimestamp('停止 外撥事件:', payload.project);
-          // 移除專案
+          // 找到正在運行的專案實例（有活躍WebSocket連接的）
+          const runningProject = activeProjects.get(payload.project.projectId);
+          if (runningProject) {
+            // 斷開正在運行的專案的 3CX WebSocket 連接
+            await runningProject.disconnect3cxWebSocket();
+            // 從活躍專案Map中移除
+            activeProjects.delete(payload.project.projectId);
+            logWithTimestamp(`專案 ${payload.project.projectId} 的 WebSocket 連接已斷開`);
+          } else {
+            warnWithTimestamp(`未找到活躍的專案實例: ${payload.project.projectId}`);
+          }
+          // 移除專案資料
           await ProjectManager.removeProject(payload.project.projectId);
           break;
         default:

@@ -18,6 +18,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import StopIcon from '@mui/icons-material/Stop';
 import InfoOutlineIcon from '@mui/icons-material/InfoOutline';
 
 import GlobalSnackbar, { type GlobalSnackbarRef } from '../components/GlobalSnackbar';
@@ -74,7 +75,7 @@ export default function Home() {
     return () => {
       ws.close();
     };
-  }, []);
+  }, [WS_URL]);
 
   // 引入 自定義 API Hook
   const { updateProject } = useUpdateBonsaleProject();
@@ -155,9 +156,23 @@ export default function Home() {
   // };
 
   // 停止撥打電話
-  // const handleStopOutbound = () => {
+  const handleStopOutbound = (project: ProjectOutboundDataType) => {
+    const message = {
+      event: 'stopOutbound',
+      payload: {
+        project: {
+          callFlowId: project.callFlowId,
+          client_id: project.appId,
+          client_secret: project.appSecret,
+          projectId: project.projectId,
+          action: 'init',
+          error: null
+        }
+      }
+    }
 
-  // };
+    sendMessage(message);
+  };
 
   // 全部專案開始外撥
   const handleAllProjectStartOutbound = async () => {
@@ -349,11 +364,21 @@ export default function Home() {
                       <Stack direction='row'>
                         <IconButton 
                           onClick={() => handleStartOutbound(item)}
+                          color="success"
+                          title="開始外撥"
                         >
                           <PlayArrowIcon />
                         </IconButton>
                         <IconButton 
+                          onClick={() => handleStopOutbound(item)}
+                          color="error"
+                          title="停止外撥"
+                        >
+                          <StopIcon />
+                        </IconButton>
+                        <IconButton 
                           onClick={() => handleExpandClick(true, item.projectId)}
+                          title="查看詳細"
                         >
                           <InfoOutlineIcon /> 
                         </IconButton> 

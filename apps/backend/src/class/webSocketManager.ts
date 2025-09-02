@@ -114,10 +114,10 @@ export class WebSocketManager {
           }
           
           // 如果是異常關閉（1006）且不是正在重連，則嘗試重連
-          if (code === 1006 && !this.isReconnecting) {
-            warnWithTimestamp('檢測到異常關閉（1006），將嘗試重新連接');
-            this.handleConnectionLost();
-          }
+          // if (code === 1006 && !this.isReconnecting) {
+          //   warnWithTimestamp('檢測到異常關閉（1006），將嘗試重新連接');
+          //   this.handleConnectionLost();
+          // }
         });
 
       } catch (error) {
