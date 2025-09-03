@@ -491,14 +491,22 @@ export default function Home() {
                                               fontWeight: 'bold'
                                             }}
                                           />
-                                          {participant.party_caller_id && (
-                                            <Chip
-                                              label={`撥打: ${participant.party_caller_id}`}
-                                              variant="outlined"
-                                              size="small"
-                                              sx={{ fontSize: '0.7rem' }}
-                                            />
-                                          )}
+                                          <Stack direction="row" spacing={1}>
+                                            {participant.party_caller_id && (
+                                              <Chip
+                                                label={`來電號碼: ${participant.party_caller_id}`}
+                                                variant="outlined"
+                                                size="small"
+                                              />
+                                            )}
+                                            {participant.party_dn && (
+                                              <Chip
+                                                label={`分機: ${participant.party_dn}`}
+                                                variant="outlined"
+                                                size="small"
+                                              />
+                                            )}
+                                          </Stack>
                                           <Chip
                                             label={`Call ID: ${participant.callid}`}
                                             variant="outlined"
