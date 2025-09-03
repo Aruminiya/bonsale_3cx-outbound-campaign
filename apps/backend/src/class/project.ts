@@ -53,6 +53,7 @@ export default class Project {
   access_token: string | null;
   caller: Array<Caller> | null;
   agentQuantity: number | 0;
+  private previousCaller: Array<Caller> | null = null; // 保存前一筆 caller 記錄
   private wsManager: WebSocketManager | null = null;
   private tokenManager: TokenManager;
 
@@ -352,6 +353,13 @@ export default class Project {
    */
   private async updateCallerInfo(): Promise<void> {
     try {
+      // 在更新前，先保存當前的 caller 作為前一筆記錄
+      if (this.caller) {
+        this.previousCaller = this.caller;
+        logWithTimestamp(`保存前一筆 caller 記錄 (${this.caller.length} 個分機)`);
+      }
+
+      // 獲取新的 caller 資訊
       const caller = await getCaller(this.access_token!);
       if (!caller.success) {
         throw new Error(`獲取呼叫者資訊失敗: ${caller.error}`);
@@ -371,6 +379,18 @@ export default class Project {
       errorWithTimestamp('更新 caller 資訊失敗:', error);
       throw error;
     }
+  }
+
+  /**
+   * 獲取指定分機的前一筆狀態
+   * @param dn 分機號碼
+   * @returns Caller | undefined
+   */
+  private getPreviousCallerStatus(dn: string): Caller | undefined {
+    if (!this.previousCaller) {
+      return undefined;
+    }
+    return this.previousCaller.find(caller => caller.dn === dn);
   }
 
   /**
@@ -450,6 +470,12 @@ export default class Project {
       // 添加延遲
       logWithTimestamp(`等待 ${delayMs}ms 後撥打電話: ${dn} -> ${targetNumber}`);
       await this.delay(delayMs);
+
+      // TODO 這邊之後要根據抓到的就撥號狀態 去寫 Bonsale 紀錄 好讓名單可以正確執行
+      const previousStatus = this.getPreviousCallerStatus(dn);
+      if (previousStatus) {
+        logWithTimestamp(`分機 ${dn} 的前一筆狀態:`, previousStatus);
+      }
 
       await makeCall(this.access_token, dn, deviceId, "outbound", targetNumber);
       logWithTimestamp(`成功發起外撥: ${dn} -> ${targetNumber}`);
