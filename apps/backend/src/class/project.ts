@@ -281,8 +281,13 @@ export default class Project {
         case 1:
           logWithTimestamp(`狀態 ${messageObject.event.event_type}:`, messageObject.event);
 
-          // 最後執行外撥邏輯
-          await this.outboundCall(broadcastWs);
+          // 如果專案狀態是 stop，檢查是否還有活躍通話
+          if (this.state === 'stop') {
+            await this.handleStopStateLogic(broadcastWs);
+          } else {
+            // 最後執行外撥邏輯
+            await this.outboundCall(broadcastWs);
+          }
           break; 
         default:
           logWithTimestamp('未知事件類型:', messageObject.event.event_type);
@@ -496,6 +501,66 @@ export default class Project {
   }
 
   /**
+   * 檢查專案是否還有活躍的通話
+   * @returns boolean - true 如果還有通話，false 如果沒有
+   */
+  hasActiveCalls(): boolean {
+    if (!this.caller || this.caller.length === 0) {
+      return false;
+    }
+
+    return this.caller.some(caller => 
+      caller.participants && caller.participants.length > 0
+    );
+  }
+
+  /**
+   * 處理停止狀態下的邏輯
+   * @param broadcastWs 廣播 WebSocket 伺服器實例
+   * @private
+   */
+  private async handleStopStateLogic(broadcastWs: WebSocketServer): Promise<void> {
+    try {
+      // 更新 caller 資訊以獲取最新狀態
+      await this.updateCallerInfo();
+      
+      // 廣播專案資訊（讓前端知道當前通話狀態）
+      await this.broadcastProjectInfo(broadcastWs);
+      
+      // 檢查是否還有活躍通話
+      if (!this.hasActiveCalls()) {
+        logWithTimestamp(`專案 ${this.projectId} 已無活躍通話，執行完全停止`);
+        await this.executeCompleteStop(broadcastWs);
+      } else {
+        logWithTimestamp(`專案 ${this.projectId} 仍有活躍通話，等待通話結束`);
+      }
+    } catch (error) {
+      errorWithTimestamp(`處理停止狀態邏輯時發生錯誤:`, error);
+    }
+  }
+
+  /**
+   * 執行完全停止邏輯
+   * @param broadcastWs 廣播 WebSocket 伺服器實例
+   */
+  async executeCompleteStop(broadcastWs: WebSocketServer): Promise<void> {
+    try {
+      // 斷開 WebSocket 連接
+      await this.disconnect3cxWebSocket();
+      
+      // 從 Redis 移除專案
+      await ProjectManager.removeProject(this.projectId);
+      
+      // 最後廣播一次更新
+      await this.broadcastProjectInfo(broadcastWs);
+      
+      logWithTimestamp(`專案 ${this.projectId} 已完全停止並移除`);
+    } catch (error) {
+      errorWithTimestamp(`執行完全停止時發生錯誤:`, error);
+    }
+  }
+
+  /**
    * 處理 token 更新後的 WebSocket 重連
    * @param broadcastWs 廣播 WebSocket 伺服器實例 (可選)
    * @private
@@ -604,23 +669,35 @@ export default class Project {
     try {
       const { projectId } = projectData;
       
-      // 找到正在運行的專案實例（有活躍WebSocket連接的）
+      // 找到正在運行的專案實例
       const runningProject = activeProjects.get(projectId);
       if (runningProject) {
-        // 斷開正在運行的專案的 3CX WebSocket 連接
-        await runningProject.disconnect3cxWebSocket();
-        // 從活躍專案Map中移除
-        activeProjects.delete(projectId);
-        logWithTimestamp(`專案 ${projectId} 的 WebSocket 連接已斷開`);
+        logWithTimestamp(`開始停止專案 ${projectId}`);
+        
+        // 更新專案狀態為 stop
+        runningProject.updateState('stop');
+        
+        // 同步更新 Redis 中的狀態
+        await ProjectManager.updateProjectAction(projectId, 'stop');
+        
+        // 檢查是否還有活躍通話
+        if (!runningProject.hasActiveCalls()) {
+          // 沒有活躍通話，立即執行完全停止
+          logWithTimestamp(`專案 ${projectId} 無活躍通話，立即完全停止`);
+          await runningProject.executeCompleteStop(ws);
+          activeProjects.delete(projectId);
+        } else {
+          // 有活躍通話，等待通話結束
+          logWithTimestamp(`專案 ${projectId} 有活躍通話，等待通話結束後自動停止`);
+          // 廣播狀態更新
+          await broadcastAllProjects(ws, projectId);
+        }
       } else {
-        warnWithTimestamp(`未找到活躍的專案實例: ${projectId}`);
+        // 如果沒有活躍實例，直接從 Redis 移除
+        warnWithTimestamp(`未找到活躍的專案實例: ${projectId}，直接從 Redis 移除`);
+        await ProjectManager.removeProject(projectId);
+        await broadcastAllProjects(ws);
       }
-      
-      // 移除專案資料
-      await ProjectManager.removeProject(projectId);
-      
-      // 廣播更新給前端
-      broadcastAllProjects(ws);
       
       return true;
     } catch (error) {
