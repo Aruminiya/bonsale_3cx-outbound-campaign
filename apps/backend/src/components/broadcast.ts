@@ -25,7 +25,7 @@ export async function broadcastAllProjects(
         allProjects: allProjects.map(p => ({
           projectId: p.projectId,
           callFlowId: p.callFlowId,
-          action: p.action,
+          state: p.state,
           client_id: p.client_id,
           agentQuantity: p.agentQuantity,
           caller: p.caller,

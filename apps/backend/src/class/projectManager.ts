@@ -18,7 +18,7 @@ export class ProjectManager {
         client_secret: project.client_secret,
         callFlowId: project.callFlowId,
         projectId: project.projectId,
-        action: project.action,
+        state: project.state,
         error: project.error || '',
         access_token: project.access_token || '',
         caller: project.caller ? JSON.stringify(project.caller) : '',
@@ -60,12 +60,11 @@ export class ProjectManager {
         projectData.client_secret,
         projectData.callFlowId,
         projectData.projectId,
-        projectData.action as 'init' | 'active',
+        projectData.state as 'active' | 'stop',
         projectData.error || null,
         projectData.access_token || null,
         projectData.caller ? JSON.parse(projectData.caller) : null,
-        projectData.agentQuantity ? parseInt(projectData.agentQuantity) : 0,
-        // ws_3cx 無法從 Redis 重建，需在應用程式中重新建立
+        parseInt(projectData.agentQuantity) || 0
       );
 
       return project;
@@ -106,15 +105,15 @@ export class ProjectManager {
   }
 
   // 更新專案狀態
-  static async updateProjectAction(projectId: string, action: 'init' | 'active'): Promise<void> {
+  static async updateProjectAction(projectId: string, state: 'active' | 'stop'): Promise<void> {
     try {
       const projectKey = `${this.PROJECT_PREFIX}${projectId}`;
       await redisClient.hSet(projectKey, {
-        action: action,
+        state: state,
         updatedAt: new Date().toISOString()
       });
       
-      logWithTimestamp(`專案 ${projectId} 狀態更新為: ${action}`);
+      logWithTimestamp(`專案 ${projectId} 狀態更新為: ${state}`);
     } catch (error) {
       errorWithTimestamp('更新專案狀態失敗:', error);
       throw error;
@@ -187,20 +186,20 @@ export class ProjectManager {
   static async getProjectStats(): Promise<{
     totalProjects: number;
     activeProjects: string[];
-    initProjects: number;
+    stopProjects: number;
     activeProjectsCount: number;
   }> {
     try {
       const projectIds = await this.getAllActiveProjectIds();
       const projects = await this.getAllActiveProjects();
       
-      const initProjects = projects.filter(p => p.action === 'init').length;
-      const activeProjectsCount = projects.filter(p => p.action === 'active').length;
+      const stopProjects = projects.filter(p => p.state === 'stop').length;
+      const activeProjectsCount = projects.filter(p => p.state === 'active').length;
       
       return {
         totalProjects: projectIds.length,
         activeProjects: projectIds,
-        initProjects,
+        stopProjects,
         activeProjectsCount
       };
     } catch (error) {
@@ -208,7 +207,7 @@ export class ProjectManager {
       return {
         totalProjects: 0,
         activeProjects: [],
-        initProjects: 0,
+        stopProjects: 0,
         activeProjectsCount: 0
       };
     }

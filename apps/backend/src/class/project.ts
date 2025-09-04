@@ -48,7 +48,7 @@ export default class Project {
   client_secret: string;
   callFlowId: string;
   projectId: string;
-  action: 'init' | 'active';
+  state: 'active' | 'stop';
   error: string | null;
   access_token: string | null;
   caller: Array<Caller> | null;
@@ -63,7 +63,7 @@ export default class Project {
    * @param client_secret 3CX 客戶端密鑰
    * @param callFlowId 呼叫流程 ID
    * @param projectId 專案 ID
-   * @param action 專案狀態 ('init' | 'active')
+   * @param state 專案狀態 ('active' | 'stop')
    * @param error 錯誤訊息
    * @param access_token 存取權杖
    * @param caller 呼叫者資訊陣列
@@ -74,7 +74,7 @@ export default class Project {
     client_secret: string,
     callFlowId: string,
     projectId: string,
-    action: 'init' | 'active',
+    state:  'active' | 'stop',
     error: string | null = null,
     access_token: string | null = null,
     caller: Array<Caller> | null = null,
@@ -85,7 +85,7 @@ export default class Project {
     this.client_secret = client_secret;
     this.callFlowId = callFlowId;
     this.projectId = projectId;
-    this.action = action;
+    this.state = state;
     this.error = error;
     this.access_token = access_token;
     this.caller = caller;
@@ -152,7 +152,7 @@ export default class Project {
         client_secret,
         callFlowId,
         projectId,
-        'init',
+        'active',
         null,
         access_token,
         callerData,
@@ -182,10 +182,10 @@ export default class Project {
 
   /**
    * 更新專案狀態
-   * @param newAction 新的專案狀態 ('init' | 'active')
+   * @param newAction 新的專案狀態 ('active' | 'stop')
    */
-  updateAction(newAction: 'init' | 'active'): void {
-    this.action = newAction;
+  updateState(newState: 'active' | 'stop'): void {
+    this.state = newState;
   }
 
   /**
@@ -304,14 +304,14 @@ export default class Project {
   private async outboundCall(broadcastWs?: WebSocketServer): Promise<void> {
     try {
       // 步驟一: 檢查專案狀態
-      if (this.action !== 'init' && this.action !== 'active') {
-        logWithTimestamp('專案狀態不符合外撥條件:', this.action);
+      if (this.state !== 'active') {
+        logWithTimestamp('專案狀態不符合外撥條件:', this.state);
         return;
       }
       
       // 步驟二: 檢查並刷新 access_token
       if (!this.access_token) {
-        logWithTimestamp('當前專案缺少 access_token');
+        errorWithTimestamp('當前專案缺少 access_token');
         return;
       }
 

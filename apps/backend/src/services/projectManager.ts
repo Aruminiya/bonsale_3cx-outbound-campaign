@@ -18,7 +18,7 @@ export class ProjectManager {
         client_secret: project.client_secret,
         callFlowId: project.callFlowId,
         projectId: project.projectId,
-        action: project.action,
+        state: project.state,
         error: project.error || '',
         access_token: project.access_token || '',
         caller: project.caller ? JSON.stringify(project.caller) : '',
@@ -60,7 +60,7 @@ export class ProjectManager {
         projectData.client_secret,
         projectData.callFlowId,
         projectData.projectId,
-        projectData.action as 'init' | 'active',
+        projectData.action as 'active' | 'stop',
         projectData.error || null,
         projectData.access_token || null,
         projectData.caller ? JSON.parse(projectData.caller) : null, // 解析 JSON 字串
@@ -105,7 +105,7 @@ export class ProjectManager {
   }
 
   // 更新專案狀態
-  static async updateProjectAction(projectId: string, action: 'init' | 'active'): Promise<void> {
+  static async updateProjectAction(projectId: string, action: 'active' | 'stop'): Promise<void> {
     try {
       const projectKey = `${this.PROJECT_PREFIX}${projectId}`;
       await redisClient.hSet(projectKey, {
@@ -212,20 +212,20 @@ export class ProjectManager {
   static async getProjectStats(): Promise<{
     totalProjects: number;
     activeProjects: string[];
-    initProjects: number;
+    stopProjects: number;
     activeProjectsCount: number;
   }> {
     try {
       const projectIds = await this.getAllActiveProjectIds();
       const projects = await this.getAllActiveProjects();
       
-      const initProjects = projects.filter(p => p.action === 'init').length;
-      const activeProjectsCount = projects.filter(p => p.action === 'active').length;
+      const stopProjects = projects.filter(p => p.state === 'stop').length;
+      const activeProjectsCount = projects.filter(p => p.state === 'active').length;
       
       return {
         totalProjects: projectIds.length,
         activeProjects: projectIds,
-        initProjects,
+        stopProjects,
         activeProjectsCount
       };
     } catch (error) {
@@ -233,7 +233,7 @@ export class ProjectManager {
       return {
         totalProjects: 0,
         activeProjects: [],
-        initProjects: 0,
+        stopProjects: 0,
         activeProjectsCount: 0
       };
     }

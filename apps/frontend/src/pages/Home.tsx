@@ -35,7 +35,7 @@ export default function Home() {
   const wsRef = useRef<WebSocket | null>(null);
 
   // 發送 WS 訊息
-  const sendMessage = (message: SendMessagePayload) => {
+  const sendMessage = (message: SendMessagePayload<SendProjectMessage>) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(message));
     } else {
@@ -141,8 +141,6 @@ export default function Home() {
           client_id: project.appId,
           client_secret: project.appSecret,
           projectId: project.projectId,
-          action: 'init',
-          error: null
         }
       }
     }

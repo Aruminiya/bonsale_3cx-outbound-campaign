@@ -336,19 +336,18 @@ declare global {
     };
   }
 
-  interface SendMessagePayload {
-    event: string;
-    payload: {
-      project?: {
-        callFlowId: string;
-        projectId: string;
-        client_id: string;
-        client_secret: string;
-        action: string;
-        error: string | null;
-      };
-      // 可以根據需要添加其他類型的 payload
+  interface SendProjectMessage {
+    project: {
+      callFlowId: string;
+      projectId: string;
+      client_id: string;
+      client_secret: string;
     };
+  }
+
+  interface SendMessagePayload<T> {
+    event: string;
+    payload: T
   };
 
   // WebSocket 訊息中的專案資料結構
