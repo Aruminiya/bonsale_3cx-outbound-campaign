@@ -284,12 +284,9 @@ export default function Home() {
                   動作 
                 </Stack>
               </TableCell>
-              <TableCell align='center' sx={{ width: '20px' }}>
-                撥打狀況
+              <TableCell align='center' sx={{ width: '400px' }}>
+                當前撥打資訊
               </TableCell>
-                <TableCell align='center' sx={{ width: '400px' }}>
-                  當前撥打資訊
-                </TableCell>
             </TableRow>
           </TableHead>
           <TableBody sx={{  backgroundColor: 'white' }}>
@@ -313,7 +310,7 @@ export default function Home() {
                   <TableRow 
                     key={item.projectId}
                     sx={{
-                      backgroundColor: item.callStatus === 4 ? '#f5f5f5' : item.callStatus === 3 ? '#FFF4F4' : 'inherit',
+
                       minHeight: '120px',
                       '& .MuiTableCell-root': {
                         verticalAlign: 'top',
@@ -332,89 +329,51 @@ export default function Home() {
                       {item.projectName}
                     </TableCell>
                     <TableCell align='center'>
-                      <Chip label={
-                        item.callStatus === 0 ? '未執行' :
-                        item.callStatus === 1 ? '執行中' :
-                        item.callStatus === 2 ? '執行完成' :
-                        item.callStatus === 3 ? '執行失敗' :
-                        item.callStatus === 4 ? '暫停執行' :
-                        '未知狀態'
-                      } sx={{ 
-                        marginBottom: '4px',
-                        width: '80px',
-                        color: () => 
-                          item.callStatus === 1  || 
-                          item.callStatus === 2 
-                          ? 'white' : 'black',
-                        bgcolor: (theme) => 
-                          item.callStatus === 0 ? theme.palette.primary.color50 :
-                          item.callStatus === 1 ? theme.palette.primary.main :
-                          item.callStatus === 2 ? theme.palette.primary.dark :
-                          item.callStatus === 3 ? theme.palette.error.main :
-                          item.callStatus === 4 ? theme.palette.warning.main :
-                          theme.palette.warning.light
-                      }} />
+                      {(() => {
+                        const projectWsData = getProjectCallMessage(item.projectId);
+                        console.log('projectWsData', projectWsData);
+                        if (!projectWsData) {
+                          return <Chip label="未執行" sx={{ bgcolor: 'primary.color50' }} />;
+                        } else {
+                          const stateLabel = projectWsData.state === 'active' ? '執行中' :
+                                              projectWsData.state === 'stop' ? '停止撥打' :
+                                              projectWsData.state;
+                          return <Chip label={stateLabel} sx={{ bgcolor: 'success.main', color: 'white' }} />;
+                        }
+                      })()}
                     </TableCell>
                     <TableCell align='center'>
                       {item.extension}
                     </TableCell>
                     <TableCell align='center'>
                       <Stack direction='row'>
-                        <IconButton 
-                          onClick={() => handleStartOutbound(item)}
-                          color="success"
-                          title="開始外撥"
-                        >
-                          <PlayArrowIcon />
-                        </IconButton>
-                        <IconButton 
-                          onClick={() => handleStopOutbound(item)}
-                          color="error"
-                          title="停止外撥"
-                        >
-                          <StopIcon />
-                        </IconButton>
+                        {(() => {
+                          const projectWsData = getProjectCallMessage(item.projectId);
+                          if (!projectWsData) {
+                            return <IconButton 
+                              onClick={() => handleStartOutbound(item)}
+                                  color="success"
+                                  title="開始外撥"
+                                >
+                                  <PlayArrowIcon />
+                                </IconButton>;
+                              } else {
+                                return <IconButton 
+                                  onClick={() => handleStopOutbound(item)}
+                                  color="error"
+                                  title="停止外撥"
+                                >
+                                  <StopIcon />
+                                </IconButton>;
+                              }
+                          })()
+                        }
                         <IconButton 
                           onClick={() => handleExpandClick(true, item.projectId)}
                           title="查看詳細"
                         >
                           <InfoOutlineIcon /> 
                         </IconButton> 
-                      </Stack>
-                    </TableCell>
-                    <TableCell align='center'>
-                      <Stack spacing={1} alignItems="center">
-                        <Chip 
-                          label="準備撥打" 
-                          size="small"
-                          variant="outlined"
-                          sx={{ fontSize: '0.7rem' }}
-                        />
-                        {/* 顯示 WebSocket 中的動態狀態 */}
-                        {(() => {
-                          const projectWsData = getProjectCallMessage(item.projectId);
-                          if (projectWsData) {
-                            const actionLabel = projectWsData.action === 'init' ? '初始化' : 
-                                              projectWsData.action === 'active' ? '執行中' : 
-                                              projectWsData.action;
-                            return (
-                              <Chip
-                                label={actionLabel} 
-                                size="small" 
-                                sx={{ 
-                                  fontSize: '0.7rem',
-                                  fontWeight: 'bold',
-                                  bgcolor: (theme) => 
-                                    projectWsData.action === 'init' ? theme.palette.warning.main :
-                                    projectWsData.action === 'active' ? theme.palette.success.main :
-                                    theme.palette.primary.main,
-                                  color: 'white'
-                                }}
-                              />
-                            );
-                          }
-                          return null;
-                        })()}
                       </Stack>
                     </TableCell>
                     <TableCell align='left'>

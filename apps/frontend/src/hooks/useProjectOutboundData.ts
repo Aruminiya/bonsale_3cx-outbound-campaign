@@ -26,12 +26,8 @@ const useProjectOutboundData = () => {
         projectName: item.projectInfo.projectName,
         startDate: new Date(item.projectInfo.startDate),
         endDate: new Date(item.projectInfo.endDate),
-        callStatus: 0,
         extension: item.callFlow.phone,
-        projectCallState: 'init',
-        projectCallData: null,
         isEnable: item.projectInfo.isEnable,
-        errorTimes: 0,
       }));
       
       setProjectOutboundData(prev => [...prev, ...dataList]);
