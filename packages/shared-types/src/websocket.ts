@@ -18,7 +18,7 @@ export interface StartOutboundMessage extends ClientToServerMessage {
       projectId: string;
       client_id: string;
       client_secret: string;
-      action: 'init' | 'active';
+      state: 'active' | 'stop';
       error: string | null;
     };
   };
@@ -49,7 +49,7 @@ export interface ServerToClientMessage {
 export interface ProjectData {
   projectId: string;
   callFlowId: string;
-  action: 'init' | 'active';
+  state: 'active' | 'stop';
   client_id: string;
   agentQuantity: number;
   caller: unknown;

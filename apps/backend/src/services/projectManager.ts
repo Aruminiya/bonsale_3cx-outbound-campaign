@@ -60,7 +60,7 @@ export class ProjectManager {
         projectData.client_secret,
         projectData.callFlowId,
         projectData.projectId,
-        projectData.action as 'active' | 'stop',
+        projectData.state as 'active' | 'stop',
         projectData.error || null,
         projectData.access_token || null,
         projectData.caller ? JSON.parse(projectData.caller) : null, // 解析 JSON 字串
@@ -105,15 +105,15 @@ export class ProjectManager {
   }
 
   // 更新專案狀態
-  static async updateProjectAction(projectId: string, action: 'active' | 'stop'): Promise<void> {
+  static async updateProjectAction(projectId: string, state: 'active' | 'stop'): Promise<void> {
     try {
       const projectKey = `${this.PROJECT_PREFIX}${projectId}`;
       await redisClient.hSet(projectKey, {
-        action: action,
+        state: state,
         updatedAt: new Date().toISOString()
       });
       
-      logWithTimestamp(`專案 ${projectId} 狀態更新為: ${action}`);
+      logWithTimestamp(`專案 ${projectId} 狀態更新為: ${state}`);
     } catch (error) {
       errorWithTimestamp('更新專案狀態失敗:', error);
       throw error;

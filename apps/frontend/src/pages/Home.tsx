@@ -163,7 +163,7 @@ export default function Home() {
           client_id: project.appId,
           client_secret: project.appSecret,
           projectId: project.projectId,
-          action: 'init',
+          state: 'active',
           error: null
         }
       }

@@ -7,25 +7,7 @@ declare global {
     projectName: string
     startDate: Date;
     endDate: Date;
-    callStatus: number
     extension: string
-    // projectCustomersDesc: ProjectCustomersDesc[]
-    projectCallState: string // 撥打狀態
-    projectCallData: {
-      id: string;
-      phone: string;
-      callFlowId: string;
-      projectId: string;
-      activeCall?: {
-        Id: number;
-        Caller: string;
-        Callee: string;
-        Status: string;
-        LastChangeStatus: string;
-        EstablishedAt: string;
-        ServerNow: string;
-      };
-    } | null
     isEnable: boolean
   }
   interface ProjectCustomersDesc {
@@ -354,7 +336,7 @@ declare global {
   interface WebSocketProject {
     projectId: string;
     callFlowId: string;
-    action: string;
+    state: string;
     client_id: string;
     agentQuantity: number;
     caller: Array<{

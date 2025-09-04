@@ -29,7 +29,7 @@
       projectId: string;
       client_id: string;
       client_secret: string;
-      action: 'init' | 'active';
+      state: 'active' | 'stop';
       error: string | null;
     }
   }
@@ -73,7 +73,7 @@
       {
         projectId: string;
         callFlowId: string;
-        action: 'init' | 'active';
+        state: 'active' | 'stop';
         client_id: string;
         agentQuantity: number;
         caller: unknown;
@@ -151,7 +151,7 @@ sendMessage({
       projectId: 'proj-456',
       client_id: 'client-789',
       client_secret: 'secret',
-      action: 'init',
+      state: 'active',
       error: null
     }
   }
