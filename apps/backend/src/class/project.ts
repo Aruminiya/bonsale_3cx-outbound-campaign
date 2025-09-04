@@ -530,7 +530,12 @@ export default class Project {
       // 檢查是否還有活躍通話
       if (!this.hasActiveCalls()) {
         logWithTimestamp(`專案 ${this.projectId} 已無活躍通話，執行完全停止`);
-        await this.executeCompleteStop(broadcastWs);
+
+        // 故意延遲一秒 讓前端不要唐突消失撥打狀態
+        setTimeout(async () => {
+          await this.executeCompleteStop(broadcastWs);
+        }, 1000);
+
       } else {
         logWithTimestamp(`專案 ${this.projectId} 仍有活躍通話，等待通話結束`);
       }
