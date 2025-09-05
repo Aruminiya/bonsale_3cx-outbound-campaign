@@ -6,6 +6,9 @@ import { ProjectManager } from '../services/projectManager';
 import { broadcastAllProjects } from '../components/broadcast';
 import { WebSocketManager } from './webSocketManager';
 import { TokenManager } from './tokenManager';
+import { CallListManager } from './callListManager';
+import { getOutbound } from '../services/api/bonsale';
+import { Outbound } from '../types/bonsale/getOutbound';
 
 dotenv.config();
 
@@ -224,6 +227,8 @@ export default class Project {
           {
             onOpen: async () => {
               logWithTimestamp('3CX WebSocket 連接成功');
+              // 生成測試撥號名單（agentQuantity 的 3 倍）
+              await this.getBonsaleOutboundCallList();
               try {
                 await this.outboundCall(broadcastWs);
               } catch (error) {
@@ -254,6 +259,7 @@ export default class Project {
 
         // 建立連接
         await this.wsManager.connect();
+        
         resolve();
         
       } catch (error) {
@@ -527,6 +533,181 @@ export default class Project {
       // 不拋出錯誤，避免影響主要的外撥流程
     }
   }
+
+  /**
+   * 從 Bonsale API 獲取外撥名單
+   * @private
+   */
+  private async getBonsaleOutboundCallList(): Promise<void> {
+    try {
+      logWithTimestamp(`開始從 Bonsale API 獲取專案 ${this.projectId} 的撥號名單`);
+
+      const limit = this.agentQuantity * 3;
+      let outboundList: Array<Outbound> = [];
+
+      // 第一輪: 取得 callStatus = 0 的名單（待撥打）
+      logWithTimestamp(`第一輪：獲取 callStatus = 0 的名單，限制 ${limit} 筆`);
+      const firstOutboundResult = await getOutbound(
+        this.callFlowId,
+        this.projectId,
+        "0",
+        limit
+      );
+
+      if (!firstOutboundResult.success) {
+        errorWithTimestamp('第一輪獲取撥號名單失敗:', firstOutboundResult.error);
+        return;
+      }
+
+      const firstOutboundData = firstOutboundResult.data;
+      const firstList = firstOutboundData?.list || [];
+
+      if (!firstList || firstList.length === 0) { // 🔧 修正條件判斷
+        // 第二輪: callStatus = 0 沒有待撥打名單，嘗試獲取 callStatus = 2 的名單
+        logWithTimestamp(`第一輪無結果，第二輪：獲取 callStatus = 2 的名單`);
+        
+        const secondOutboundResult = await getOutbound(
+          this.callFlowId,
+          this.projectId,
+          "2",
+          limit
+        );
+
+        if (!secondOutboundResult.success) {
+          errorWithTimestamp('第二輪獲取撥號名單失敗:', secondOutboundResult.error);
+          return;
+        }
+
+        const secondOutboundData = secondOutboundResult.data;
+        const secondList = secondOutboundData?.list || [];
+        
+        if (!secondList || secondList.length === 0) {
+          warnWithTimestamp('兩輪搜尋都無結果，所有名單已撥打完畢');
+          return;
+        }
+        
+        outboundList = secondList;
+        logWithTimestamp(`第二輪獲取到 ${secondList.length} 筆名單`);
+      } else {
+        outboundList = firstList;
+        logWithTimestamp(`第一輪獲取到 ${firstList.length} 筆名單`);
+      }
+
+      // 驗證名單資料
+      const validItems = outboundList.filter(item => 
+        item.customerId && 
+        item.customer?.phone && 
+        item.customer.phone.trim() !== ''
+      );
+
+      if (validItems.length === 0) {
+        warnWithTimestamp('所有獲取的名單都缺少必要資訊（customerId 或 phone）');
+        return;
+      }
+
+      if (validItems.length < outboundList.length) {
+        warnWithTimestamp(`過濾後剩餘 ${validItems.length}/${outboundList.length} 筆有效名單`);
+      }
+
+      // 批次處理撥號名單
+      const addPromises = validItems.map(item => {
+        const callListItem = new CallListManager(
+          item.projectId,
+          item.customerId,
+          item.customer?.memberName || '未知客戶',
+          item.customer?.phone || ''
+        );
+        return CallListManager.addCallListItem(callListItem);
+      });
+
+      const results = await Promise.allSettled(addPromises);
+      
+      // 統計結果
+      const successCount = results.filter(result => 
+        result.status === 'fulfilled' && result.value === true
+      ).length;
+      const failCount = results.length - successCount;
+
+      logWithTimestamp(`✅ Bonsale 撥號名單處理完成 - 成功: ${successCount}, 失敗: ${failCount}`);
+      
+      if (failCount > 0) {
+        warnWithTimestamp(`有 ${failCount} 筆資料添加失敗`);
+        
+        // 記錄失敗的詳細資訊（開發環境）
+        const failedResults = results
+          .map((result, index) => ({ result, index }))
+          .filter(({ result }) => result.status === 'rejected')
+          .slice(0, 3); // 只記錄前 3 個錯誤
+
+        failedResults.forEach(({ result, index }) => {
+          if (result.status === 'rejected') {
+            errorWithTimestamp(`失敗項目 ${index + 1}:`, result.reason);
+          }
+        });
+      }
+
+    } catch (error) {
+      errorWithTimestamp('處理 Bonsale 撥號名單失敗:', error);
+    }
+  }
+
+  // /**
+  //  * 生成測試撥號名單（備用方案）
+  //  * 根據 agentQuantity 生成 3 倍數量的測試客戶資料
+  //  * @private
+  //  */
+  // private async generateTestCallList(): Promise<void> {
+  //   try {
+  //     const testCustomerCount = this.agentQuantity * 3;
+  //     logWithTimestamp(`開始為專案 ${this.projectId} 生成 ${testCustomerCount} 筆測試撥號名單`);
+
+  //     // 台灣常見姓氏
+  //     const surnames = ['陳', '林', '黃', '張', '李', '王', '吳', '劉', '蔡', '楊', '許', '鄭', '謝', '郭', '洪'];
+  //     const names = ['志明', '春嬌', '小美', '大雄', '靜香', '胖虎', '小夫', '哆啦', '美玲', '雅婷', '怡君', '佳穎', '宗翰', '俊宏', '淑芬'];
+
+  //     const addPromises = [];
+
+  //     for (let i = 1; i <= testCustomerCount; i++) {
+  //       // 隨機生成客戶資料
+  //       const randomSurname = surnames[Math.floor(Math.random() * surnames.length)];
+  //       const randomName = names[Math.floor(Math.random() * names.length)];
+  //       const memberName = `${randomSurname}${randomName}`;
+        
+  //       // 生成台灣手機號碼格式 (09xxxxxxxx)
+  //       const phoneNumber = `09${Math.floor(Math.random() * 100000000).toString().padStart(8, '0')}`;
+        
+  //       const customerId = `test_customer_${this.projectId}_${i.toString().padStart(3, '0')}`;
+
+  //       // 創建撥號名單項目
+  //       const callListItem = new CallListManager(
+  //         this.projectId,
+  //         customerId,
+  //         memberName,
+  //         phoneNumber
+  //       );
+
+  //       // 添加到批次處理陣列
+  //       addPromises.push(CallListManager.addCallListItem(callListItem));
+  //     }
+
+  //     // 批次處理所有添加操作
+  //     const results = await Promise.allSettled(addPromises);
+      
+  //     // 統計結果
+  //     const successCount = results.filter(result => result.status === 'fulfilled' && result.value === true).length;
+  //     const failCount = results.length - successCount;
+
+  //     logWithTimestamp(`✅ 測試撥號名單生成完成 - 成功: ${successCount}, 失敗: ${failCount}`);
+      
+  //     if (failCount > 0) {
+  //       warnWithTimestamp(`有 ${failCount} 筆測試資料添加失敗`);
+  //     }
+
+  //   } catch (error) {
+  //     errorWithTimestamp('生成測試撥號名單失敗:', error);
+  //     // 不拋出錯誤，避免影響主要的 WebSocket 連接流程
+  //   }
+  // }
 
   /**
    * 延遲執行

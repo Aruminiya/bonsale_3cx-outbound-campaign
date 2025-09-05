@@ -182,7 +182,7 @@ type VisitRecord = {
   visitedResult: string;
 }
 
-export default interface GetOutbound {
+export interface Outbound {
   projectId: string;
   project: Project;
   customerId: string;
@@ -209,4 +209,12 @@ export default interface GetOutbound {
   nextCallAfter: string;
   callStatus: number;
   VisitRecords: VisitRecord[];
+}
+
+
+export default interface GetOutbound {
+  currentPage: number,
+  list: Outbound[],
+  totalCount: number,
+  totalPage: number
 }
