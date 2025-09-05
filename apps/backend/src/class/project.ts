@@ -479,7 +479,8 @@ export default class Project {
       // TODO 這邊之後要根據抓到的就撥號狀態 去寫 Bonsale 紀錄 好讓名單可以正確執行
       const previousStatus = this.getPreviousCallerStatus(dn);
       if (previousStatus) {
-        logWithTimestamp(`分機 ${dn} 的前一筆狀態:`, previousStatus);
+        // 有就紀錄 就要開始執行寫紀錄到 Bonsale 裡面
+        await this.recordBonsaleCallResult(previousStatus);
       }
 
       await makeCall(this.access_token, dn, deviceId, "outbound", targetNumber);
@@ -487,6 +488,43 @@ export default class Project {
     } catch (error) {
       errorWithTimestamp(`外撥失敗 ${dn} -> ${targetNumber}:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * 記錄 Bonsale 通話結果
+   * @param previousStatus 前一筆 Caller 狀態
+   * @private
+   */
+  private async recordBonsaleCallResult(previousStatus: Caller): Promise<void> {
+    try {
+      // TODO: 實作寫入 Bonsale 紀錄的邏輯
+      // 這裡可以根據 previousStatus 的 participants 狀態來判斷通話結果
+      logWithTimestamp(`準備記錄 Bonsale 通話結果 - 分機: ${previousStatus.dn}`);
+      
+      // 分析通話狀態
+      if (previousStatus.participants && previousStatus.participants.length > 0) {
+        const participant = previousStatus.participants[0];
+        
+        // 根據狀態判斷通話結果
+        // "Dialing" - 正在撥號
+        // "Connected" - 已接通
+        // 可以根據需要添加更多邏輯
+        switch (participant.status) {
+          case "Dialing":
+            logWithTimestamp(`分機 ${previousStatus.dn} 狀態為撥號中，記錄為未接通`);
+            break;
+          case "Connected":
+            logWithTimestamp(`分機 ${previousStatus.dn} 狀態為已接通，記錄為已接通`);
+            break;
+          default:
+            warnWithTimestamp(`分機 ${previousStatus.dn} 狀態為未知，無法記錄`);
+        }
+      }
+      
+    } catch (error) {
+      errorWithTimestamp('記錄 Bonsale 通話結果失敗:', error);
+      // 不拋出錯誤，避免影響主要的外撥流程
     }
   }
 
