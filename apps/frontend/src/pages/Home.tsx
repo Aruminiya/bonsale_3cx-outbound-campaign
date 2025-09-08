@@ -331,7 +331,6 @@ export default function Home() {
                     <TableCell align='center'>
                       {(() => {
                         const projectWsData = getProjectCallMessage(item.projectId);
-                        console.log('projectWsData', projectWsData);
                         if (!projectWsData) {
                           return <Chip label="未執行" sx={{ bgcolor: 'primary.color50' }} />;
                         } else {

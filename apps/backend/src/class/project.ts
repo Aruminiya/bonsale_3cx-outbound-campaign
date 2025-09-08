@@ -1,5 +1,6 @@
 import { WebSocketServer } from "ws";
 import dotenv from 'dotenv';
+import { throttle } from 'lodash';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from '../util/timestamp';
 import { getCaller, makeCall, get3cxToken } from '../services/api/callControl'
 import { ProjectManager } from '../services/projectManager';
@@ -59,6 +60,7 @@ export default class Project {
   private previousCaller: Array<Caller> | null = null; // 保存前一筆 caller 記錄
   private wsManager: WebSocketManager | null = null;
   private tokenManager: TokenManager;
+  private throttledMessageHandler: ((broadcastWs: WebSocketServer, data: Buffer) => Promise<void>) | null = null;
 
   /**
    * Project 類別構造函數
@@ -96,6 +98,12 @@ export default class Project {
     
     // 初始化 TokenManager
     this.tokenManager = new TokenManager(client_id, client_secret, projectId, access_token);
+    
+    // 初始化 throttled WebSocket 訊息處理器 (1000ms 內最多執行一次)
+    this.throttledMessageHandler = throttle(this.processWebSocketMessage.bind(this), 1000, {
+      leading: true,  // 第一次立即執行
+      trailing: false // 不在等待期結束後執行
+    });
   }
 
   /**
@@ -269,17 +277,31 @@ export default class Project {
   }
 
   /**
-   * 處理 WebSocket 訊息
+   * 處理 WebSocket 訊息 (throttled 版本)
    * @param data 收到的訊息資料 (Buffer 格式)
    * @private
    */
   private async handleWebSocketMessage(broadcastWs: WebSocketServer, data: Buffer): Promise<void> {
+    if (this.throttledMessageHandler) {
+      await this.throttledMessageHandler(broadcastWs, data);
+    }
+  }
+
+  /**
+   * 實際處理 WebSocket 訊息的邏輯
+   * @param broadcastWs WebSocket 伺服器實例
+   * @param data 收到的訊息資料 (Buffer 格式)
+   * @private
+   */
+  private async processWebSocketMessage(broadcastWs: WebSocketServer, data: Buffer): Promise<void> {
     try {
       // 將 Buffer 轉換為字符串
       const messageString = data.toString('utf8');
       
       // 嘗試解析 JSON
       const messageObject = JSON.parse(messageString);
+
+      logWithTimestamp(`WebSocket 訊息處理 (throttled) - 事件類型: ${messageObject.event?.event_type}`);
 
       // 根據不同的事件類型處理邏輯
       switch (messageObject.event.event_type) {
@@ -455,7 +477,7 @@ export default class Project {
         logWithTimestamp(`分機 ${dn} 空閒，可以撥打電話`);
         // TODO: 這裡應該從名單中獲取下一個要撥打的號碼
         // 可以根據需要調整延遲時間，例如 2000ms (2秒)
-        await this.makeOutboundCall(dn, device_id, "45", 2000);
+        await this.makeOutboundCall(dn, device_id, "0902213273", 2000);
       } else {
         warnWithTimestamp(`分機 ${dn} 已有通話中，無法撥打下一通電話`);
       }

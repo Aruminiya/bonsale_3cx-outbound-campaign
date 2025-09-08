@@ -30,6 +30,7 @@
     ]
   },
   "devDependencies": {
+    "@types/lodash": "^4.17.20",
     "@types/node": "^20.0.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.1.5",
@@ -40,6 +41,7 @@
   "dependencies": {
     "@types/jsonwebtoken": "^9.0.7",
     "jsonwebtoken": "^9.0.2",
+    "lodash": "^4.17.21",
     "redis": "^5.8.2"
   }
 }
