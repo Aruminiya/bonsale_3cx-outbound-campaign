@@ -475,9 +475,18 @@ export default class Project {
       // 檢查分機是否空閒
       if (!participants || participants.length === 0) {
         logWithTimestamp(`分機 ${dn} 空閒，可以撥打電話`);
-        // TODO: 這裡應該從名單中獲取下一個要撥打的號碼
-        // 可以根據需要調整延遲時間，例如 2000ms (2秒)
-        await this.makeOutboundCall(dn, device_id, "0902213273", 2000);
+        
+        // 從 Redis 獲取下一個要撥打的電話號碼
+        const nextCallItem = await CallListManager.getNextCallItem(this.projectId);
+        
+        if (nextCallItem) {
+          // 有撥號名單，進行撥打
+          logWithTimestamp(`準備撥打 - 客戶: ${nextCallItem.memberName} (${nextCallItem.customerId}), 電話: ${nextCallItem.phone}`);
+          await this.makeOutboundCall(dn, device_id, nextCallItem.phone, 2000);
+        } else {
+          // 沒有撥號名單，記錄信息
+          logWithTimestamp(`專案 ${this.projectId} 的撥號名單已空，分機 ${dn} 暫無可撥打號碼`);
+        }
       } else {
         warnWithTimestamp(`分機 ${dn} 已有通話中，無法撥打下一通電話`);
       }
@@ -584,7 +593,7 @@ export default class Project {
       const firstOutboundData = firstOutboundResult.data;
       const firstList = firstOutboundData?.list || [];
 
-      if (!firstList || firstList.length === 0) { // 🔧 修正條件判斷
+      if (!firstList || firstList.length === 0) {
         // 第二輪: callStatus = 0 沒有待撥打名單，嘗試獲取 callStatus = 2 的名單
         logWithTimestamp(`第一輪無結果，第二輪：獲取 callStatus = 2 的名單`);
         

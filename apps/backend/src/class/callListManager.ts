@@ -99,4 +99,74 @@ export class CallListManager {
       return false;
     }
   }
+
+  /**
+   * 獲取下一個要撥打的電話號碼並移除該項目
+   * @param projectId 專案 ID
+   * @returns Promise<CallListManager | null> 下一個撥號項目，如果沒有則返回 null
+   */
+  static async getNextCallItem(projectId: string): Promise<CallListManager | null> {
+    try {
+      const callListKey = this.getCallListKey(projectId);
+      
+      // 獲取第一個 hash field 的名稱
+      const fields = await redisClient.hKeys(callListKey);
+      
+      if (!fields || fields.length === 0) {
+        logWithTimestamp(`📞 專案 ${projectId} 的撥號名單已空`);
+        return null;
+      }
+
+      // 取第一個客戶 ID
+      const customerId = fields[0];
+      
+      // 獲取該客戶的資料
+      const itemDataStr = await redisClient.hGet(callListKey, customerId);
+      if (!itemDataStr) {
+        logWithTimestamp(`⚠️ 無法獲取客戶資料 - 專案: ${projectId}, 客戶: ${customerId}`);
+        return null;
+      }
+
+      // 解析資料
+      const itemData = JSON.parse(itemDataStr);
+      
+      // 創建 CallListManager 實例
+      const callListItem = new CallListManager(
+        itemData.projectId,
+        itemData.customerId,
+        itemData.memberName,
+        itemData.phone
+      );
+      
+      // 設置原始的時間戳
+      callListItem.createdAt = itemData.createdAt;
+      callListItem.updatedAt = itemData.updatedAt;
+
+      // 從 Redis 中移除該項目（已撥打）
+      await redisClient.hDel(callListKey, customerId);
+      
+      logWithTimestamp(`📞 獲取下一個撥號項目 - 專案: ${projectId}, 客戶: ${callListItem.memberName} (${callListItem.customerId}), 電話: ${callListItem.phone}`);
+      
+      return callListItem;
+    } catch (error) {
+      errorWithTimestamp('❌ 獲取下一個撥號項目失敗:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 獲取專案的撥號名單數量
+   * @param projectId 專案 ID
+   * @returns Promise<number> 撥號名單數量
+   */
+  static async getCallListCount(projectId: string): Promise<number> {
+    try {
+      const callListKey = this.getCallListKey(projectId);
+      const count = await redisClient.hLen(callListKey);
+      return count;
+    } catch (error) {
+      errorWithTimestamp('❌ 獲取撥號名單數量失敗:', error);
+      return 0;
+    }
+  }
 }
