@@ -1,6 +1,6 @@
 import { WebSocketServer } from "ws";
 import dotenv from 'dotenv';
-import { throttle } from 'lodash';
+import { throttle, type DebouncedFunc } from 'lodash';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from '../util/timestamp';
 import { getCaller, makeCall, get3cxToken } from '../services/api/callControl'
 import { ProjectManager } from '../services/projectManager';
@@ -60,7 +60,7 @@ export default class Project {
   private previousCaller: Array<Caller> | null = null; // 保存前一筆 caller 記錄
   private wsManager: WebSocketManager | null = null;
   private tokenManager: TokenManager;
-  private throttledMessageHandler: ((broadcastWs: WebSocketServer, data: Buffer) => Promise<void>) | null = null;
+  private throttledMessageHandler: DebouncedFunc<(broadcastWs: WebSocketServer, data: Buffer) => Promise<void>> | null = null;
 
   /**
    * Project 類別構造函數
@@ -101,8 +101,8 @@ export default class Project {
     
     // 初始化 throttled WebSocket 訊息處理器 (1000ms 內最多執行一次)
     this.throttledMessageHandler = throttle(this.processWebSocketMessage.bind(this), 1000, {
-      leading: true,  // 第一次立即執行
-      trailing: false // 不在等待期結束後執行
+      leading: false,  // 第一次不立即執行
+      trailing: true // 在等待期結束後執行
     });
   }
 
@@ -283,7 +283,10 @@ export default class Project {
    */
   private async handleWebSocketMessage(broadcastWs: WebSocketServer, data: Buffer): Promise<void> {
     if (this.throttledMessageHandler) {
-      await this.throttledMessageHandler(broadcastWs, data);
+      const result = this.throttledMessageHandler(broadcastWs, data);
+      if (result) {
+        await result;
+      }
     }
   }
 
