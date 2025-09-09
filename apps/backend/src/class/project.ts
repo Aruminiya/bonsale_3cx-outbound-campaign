@@ -608,7 +608,6 @@ export default class Project {
       logWithTimestamp(`等待 ${delayMs}ms 後撥打電話: ${dn} -> ${targetNumber}`);
       await this.delay(delayMs);
 
-      // TODO 這邊之後要根據抓到的撥號狀態 去寫 Bonsale 紀錄 好讓名單可以正確執行
       if (this.previousToCall && this.previousToCall.length > 0) {
         // 找到該分機的前一筆撥打記錄
         const previousCallForThisExtension = this.previousToCall.find(call => call?.dn === dn);
@@ -792,64 +791,6 @@ export default class Project {
       errorWithTimestamp('處理 Bonsale 撥號名單失敗:', error);
     }
   }
-
-  // /**
-  //  * 生成測試撥號名單（備用方案）
-  //  * 根據 agentQuantity 生成 3 倍數量的測試客戶資料
-  //  * @private
-  //  */
-  // private async generateTestCallList(): Promise<void> {
-  //   try {
-  //     const testCustomerCount = this.agentQuantity * 3;
-  //     logWithTimestamp(`開始為專案 ${this.projectId} 生成 ${testCustomerCount} 筆測試撥號名單`);
-
-  //     // 台灣常見姓氏
-  //     const surnames = ['陳', '林', '黃', '張', '李', '王', '吳', '劉', '蔡', '楊', '許', '鄭', '謝', '郭', '洪'];
-  //     const names = ['志明', '春嬌', '小美', '大雄', '靜香', '胖虎', '小夫', '哆啦', '美玲', '雅婷', '怡君', '佳穎', '宗翰', '俊宏', '淑芬'];
-
-  //     const addPromises = [];
-
-  //     for (let i = 1; i <= testCustomerCount; i++) {
-  //       // 隨機生成客戶資料
-  //       const randomSurname = surnames[Math.floor(Math.random() * surnames.length)];
-  //       const randomName = names[Math.floor(Math.random() * names.length)];
-  //       const memberName = `${randomSurname}${randomName}`;
-        
-  //       // 生成台灣手機號碼格式 (09xxxxxxxx)
-  //       const phoneNumber = `09${Math.floor(Math.random() * 100000000).toString().padStart(8, '0')}`;
-        
-  //       const customerId = `test_customer_${this.projectId}_${i.toString().padStart(3, '0')}`;
-
-  //       // 創建撥號名單項目
-  //       const callListItem = new CallListManager(
-  //         this.projectId,
-  //         customerId,
-  //         memberName,
-  //         phoneNumber
-  //       );
-
-  //       // 添加到批次處理陣列
-  //       addPromises.push(CallListManager.addCallListItem(callListItem));
-  //     }
-
-  //     // 批次處理所有添加操作
-  //     const results = await Promise.allSettled(addPromises);
-      
-  //     // 統計結果
-  //     const successCount = results.filter(result => result.status === 'fulfilled' && result.value === true).length;
-  //     const failCount = results.length - successCount;
-
-  //     logWithTimestamp(`✅ 測試撥號名單生成完成 - 成功: ${successCount}, 失敗: ${failCount}`);
-      
-  //     if (failCount > 0) {
-  //       warnWithTimestamp(`有 ${failCount} 筆測試資料添加失敗`);
-  //     }
-
-  //   } catch (error) {
-  //     errorWithTimestamp('生成測試撥號名單失敗:', error);
-  //     // 不拋出錯誤，避免影響主要的 WebSocket 連接流程
-  //   }
-  // }
 
   /**
    * 延遲執行
