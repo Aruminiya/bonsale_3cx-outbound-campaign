@@ -101,7 +101,7 @@ export class CallListManager {
   }
 
   /**
-   * 獲取下一個要撥打的電話號碼並移除該項目
+   * 獲取下一個要撥打的電話號碼並移除該項目（原子性操作）
    * @param projectId 專案 ID
    * @returns Promise<CallListManager | null> 下一個撥號項目，如果沒有則返回 null
    */
@@ -109,26 +109,65 @@ export class CallListManager {
     try {
       const callListKey = this.getCallListKey(projectId);
       
-      // 獲取第一個 hash field 的名稱
-      const fields = await redisClient.hKeys(callListKey);
-      
-      if (!fields || fields.length === 0) {
+      // 使用 Lua 腳本確保原子性操作：獲取第一個項目並立即刪除
+      const luaScript = `
+        local key = KEYS[1] 
+        local fields = redis.call('HKEYS', key)
+        if #fields == 0 then
+          return nil
+        end
+        local firstField = fields[1]
+        local value = redis.call('HGET', key, firstField)
+        if value then
+          redis.call('HDEL', key, firstField)
+          return {firstField, value}
+        end
+        return nil
+      `;
+      /*
+        這段 Lua 腳本的作用是：
+          local key = KEYS[1]  -- 這是我們傳入的 Redis key，例如 "call_list:project123"
+          local fields = redis.call('HKEYS', key)  -- 獲取所有 hash fields
+          if #fields == 0 then  -- 如果沒有任何 fields（撥號名單是空的）
+            return nil  -- 返回 nil
+          end
+          local firstField = fields[1]  -- 取第一個 field（例如 "customer001"）
+          local value = redis.call('HGET', key, firstField)  -- 獲取該 field 的值
+          if value then  -- 如果值存在
+            redis.call('HDEL', key, firstField)  -- 刪除該 field
+            return {firstField, value}  -- 返回 field 名稱和值
+          end
+          return nil  -- 如果沒有值，返回 nil
+      */
+
+      // 執行 Lua 腳本
+      const result = await redisClient.eval(luaScript, {
+        keys: [callListKey],
+        arguments: []
+      }) as [string, string] | null;
+
+      if (!result || !Array.isArray(result) || result.length !== 2) {
         logWithTimestamp(`📞 專案 ${projectId} 的撥號名單已空`);
         return null;
       }
 
-      // 取第一個客戶 ID
-      const customerId = fields[0];
+      const [customerId, itemDataStr] = result;
       
-      // 獲取該客戶的資料
-      const itemDataStr = await redisClient.hGet(callListKey, customerId);
-      if (!itemDataStr) {
-        logWithTimestamp(`⚠️ 無法獲取客戶資料 - 專案: ${projectId}, 客戶: ${customerId}`);
+      // 檢查資料是否有效
+      if (!customerId || !itemDataStr) {
+        logWithTimestamp(`📞 專案 ${projectId} 獲取到無效的撥號資料`);
         return null;
       }
 
       // 解析資料
-      const itemData = JSON.parse(itemDataStr);
+      let itemData;
+      try {
+        itemData = JSON.parse(itemDataStr);
+      } catch (parseError) {
+        errorWithTimestamp(`❌ 解析撥號項目 JSON 失敗 - 專案: ${projectId}, 原始資料:`, itemDataStr);
+        errorWithTimestamp('JSON 解析錯誤:', parseError);
+        return null;
+      }
       
       // 創建 CallListManager 實例
       const callListItem = new CallListManager(
@@ -142,14 +181,11 @@ export class CallListManager {
       callListItem.createdAt = itemData.createdAt;
       callListItem.updatedAt = itemData.updatedAt;
 
-      // 從 Redis 中移除該項目（已撥打）
-      await redisClient.hDel(callListKey, customerId);
-      
-      logWithTimestamp(`📞 獲取下一個撥號項目 - 專案: ${projectId}, 客戶: ${callListItem.memberName} (${callListItem.customerId}), 電話: ${callListItem.phone}`);
+      logWithTimestamp(`📞 原子性獲取撥號項目 - 專案: ${projectId}, 客戶: ${callListItem.memberName} (${callListItem.customerId}), 電話: ${callListItem.phone}`);
       
       return callListItem;
     } catch (error) {
-      errorWithTimestamp('❌ 獲取下一個撥號項目失敗:', error);
+      errorWithTimestamp('❌ 原子性獲取下一個撥號項目失敗:', error);
       return null;
     }
   }
