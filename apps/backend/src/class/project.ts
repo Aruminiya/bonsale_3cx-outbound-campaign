@@ -21,6 +21,17 @@ if (!WS_HOST_3CX) {
   console.warn('警告: WS_HOST_3CX 環境變數未設定');
 }
 
+// 定義撥打記錄的類型
+type ToCallRecord = {
+  customerId: string;
+  memberName: string;
+  phone: string;
+  status: "Dialing" | "Connected";
+  projectId: string;
+  dn?: string; // 撥打的分機號碼
+  dialTime?: string; // 撥打時間
+} | null;
+
 type Participants = {
     id: number,
     status: "Dialing" | "Connected",
@@ -56,8 +67,9 @@ export default class Project {
   error: string | null;
   access_token: string | null;
   caller: Array<Caller> | null;
+  currentToCall: Array<ToCallRecord> | null = null; // 保存當前撥打記錄
   agentQuantity: number | 0;
-  private previousCaller: Array<Caller> | null = null; // 保存前一筆 caller 記錄
+  private previousToCall: Array<ToCallRecord> | null = null; // 保存前一筆撥打記錄
   private wsManager: WebSocketManager | null = null;
   private tokenManager: TokenManager;
   private throttledMessageHandler: DebouncedFunc<(broadcastWs: WebSocketServer, data: Buffer) => Promise<void>> | null = null;
@@ -369,12 +381,15 @@ export default class Project {
       // 步驟三: 獲取並更新 caller 資訊
       await this.updateCallerInfo();
 
-      // 步驟四: 廣播專案資訊
+      // 步驟四: 更新當前撥打記錄的狀態
+      await this.updateCurrentToCallStatus();
+
+      // 步驟五: 廣播專案資訊
       if (broadcastWs) {
         await this.broadcastProjectInfo(broadcastWs);
       }
 
-      // 步驟五: 執行外撥邏輯
+      // 步驟六: 執行外撥邏輯
       await this.executeOutboundCalls();
 
     } catch (error) {
@@ -389,12 +404,6 @@ export default class Project {
    */
   private async updateCallerInfo(): Promise<void> {
     try {
-      // 在更新前，先保存當前的 caller 作為前一筆記錄
-      if (this.caller) {
-        this.previousCaller = this.caller;
-        logWithTimestamp(`保存前一筆 caller 記錄 (${this.caller.length} 個分機)`);
-      }
-
       // 獲取新的 caller 資訊
       const caller = await getCaller(this.access_token!);
       if (!caller.success) {
@@ -418,15 +427,48 @@ export default class Project {
   }
 
   /**
-   * 獲取指定分機的前一筆狀態
-   * @param dn 分機號碼
-   * @returns Caller | undefined
+   * 更新當前撥打記錄的狀態
+   * @private
    */
-  private getPreviousCallerStatus(dn: string): Caller | undefined {
-    if (!this.previousCaller) {
-      return undefined;
+  private async updateCurrentToCallStatus(): Promise<void> {
+    try {
+      if (!this.currentToCall || !this.caller) {
+        return;
+      }
+
+      let hasUpdate = false;
+
+      // 遍歷所有當前撥打記錄
+      for (let i = 0; i < this.currentToCall.length; i++) {
+        const currentCall = this.currentToCall[i];
+        if (!currentCall || !currentCall.dn) continue;
+
+        // 找到對應的分機資訊
+        const callerInfo = this.caller.find(caller => caller.dn === currentCall.dn);
+        
+        if (callerInfo && callerInfo.participants && callerInfo.participants.length > 0) {
+          const participant = callerInfo.participants[0];
+          const newStatus = participant.status;
+          
+          // 如果狀態有變化，更新
+          if (currentCall.status !== newStatus) {
+            const oldStatus = currentCall.status;
+            this.currentToCall[i] = { ...currentCall, status: newStatus };
+            hasUpdate = true;
+            
+            logWithTimestamp(`撥打狀態更新 - 分機: ${currentCall.dn}, 客戶: ${currentCall.memberName}, 狀態: ${oldStatus} -> ${newStatus}`);
+          }
+        }
+      }
+
+      // 如果有任何更新，同步到 Redis
+      if (hasUpdate) {
+        await ProjectManager.updateProjectCurrentToCall(this.projectId, this.currentToCall);
+      }
+    } catch (error) {
+      errorWithTimestamp('更新當前撥打記錄狀態失敗:', error);
+      // 不拋出錯誤，避免影響主要流程
     }
-    return this.previousCaller.find(caller => caller.dn === dn);
   }
 
   /**
@@ -483,8 +525,55 @@ export default class Project {
         const nextCallItem = await CallListManager.getNextCallItem(this.projectId);
         
         if (nextCallItem) {
+          // 初始化陣列（如果需要）
+          if (!this.currentToCall) {
+            this.currentToCall = [];
+          }
+          if (!this.previousToCall) {
+            this.previousToCall = [];
+          }
+
+          // 檢查該分機是否已有撥打記錄
+          const existingCallIndex = this.currentToCall.findIndex(call => call?.dn === dn);
+          
+          if (existingCallIndex >= 0) {
+            // 如果該分機已有撥打記錄，移動到 previousToCall
+            const existingCall = this.currentToCall[existingCallIndex];
+            if (existingCall) {
+              // 更新 previousToCall 中該分機的記錄
+              const prevCallIndex = this.previousToCall.findIndex(call => call?.dn === dn);
+              if (prevCallIndex >= 0) {
+                this.previousToCall[prevCallIndex] = { ...existingCall };
+              } else {
+                this.previousToCall.push({ ...existingCall });
+              }
+              logWithTimestamp(`保存分機 ${dn} 的前一筆撥打記錄 - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
+            }
+          }
+
+          // 創建新的撥打記錄
+          const newCallRecord: ToCallRecord = {
+            customerId: nextCallItem.customerId,
+            memberName: nextCallItem.memberName,
+            phone: nextCallItem.phone,
+            status: "Dialing", // 初始狀態為撥號中
+            projectId: nextCallItem.projectId,
+            dn: dn,
+            dialTime: new Date().toISOString()
+          };
+
+          // 更新或添加當前撥打記錄
+          if (existingCallIndex >= 0) {
+            this.currentToCall[existingCallIndex] = newCallRecord;
+          } else {
+            this.currentToCall.push(newCallRecord);
+          }
+          
+          // 同步更新到 Redis
+          await ProjectManager.updateProjectCurrentToCall(this.projectId, this.currentToCall);
+          
           // 有撥號名單，進行撥打
-          logWithTimestamp(`準備撥打 - 客戶: ${nextCallItem.memberName} (${nextCallItem.customerId}), 電話: ${nextCallItem.phone}`);
+          logWithTimestamp(`準備撥打 - 客戶: ${nextCallItem.memberName} (${nextCallItem.customerId}), 電話: ${nextCallItem.phone}, 分機: ${dn}`);
           await this.makeOutboundCall(dn, device_id, nextCallItem.phone, 2000);
         } else {
           // 沒有撥號名單，記錄信息
@@ -516,11 +605,14 @@ export default class Project {
       logWithTimestamp(`等待 ${delayMs}ms 後撥打電話: ${dn} -> ${targetNumber}`);
       await this.delay(delayMs);
 
-      // TODO 這邊之後要根據抓到的就撥號狀態 去寫 Bonsale 紀錄 好讓名單可以正確執行
-      const previousStatus = this.getPreviousCallerStatus(dn);
-      if (previousStatus) {
-        // 有就紀錄 就要開始執行寫紀錄到 Bonsale 裡面
-        await this.recordBonsaleCallResult(previousStatus);
+      // TODO 這邊之後要根據抓到的撥號狀態 去寫 Bonsale 紀錄 好讓名單可以正確執行
+      if (this.previousToCall && this.previousToCall.length > 0) {
+        // 找到該分機的前一筆撥打記錄
+        const previousCallForThisExtension = this.previousToCall.find(call => call?.dn === dn);
+        if (previousCallForThisExtension) {
+          // 有該分機的前一筆撥打記錄，執行寫紀錄到 Bonsale 裡面
+          await this.recordBonsaleCallResult(previousCallForThisExtension);
+        }
       }
 
       await makeCall(this.access_token, dn, deviceId, "outbound", targetNumber);
@@ -533,32 +625,45 @@ export default class Project {
 
   /**
    * 記錄 Bonsale 通話結果
-   * @param previousStatus 前一筆 Caller 狀態
+   * @param previousToCallRecord 前一筆撥打記錄
    * @private
    */
-  private async recordBonsaleCallResult(previousStatus: Caller): Promise<void> {
+  private async recordBonsaleCallResult(previousToCallRecord: {
+    customerId: string;
+    memberName: string;
+    phone: string;
+    projectId: string;
+    dn?: string;
+    dialTime?: string;
+  }): Promise<void> {
     try {
       // TODO: 實作寫入 Bonsale 紀錄的邏輯
-      // 這裡可以根據 previousStatus 的 participants 狀態來判斷通話結果
-      logWithTimestamp(`準備記錄 Bonsale 通話結果 - 分機: ${previousStatus.dn}`);
+      // 這裡可以根據當前的 caller 狀態來判斷前一通電話的通話結果
+      logWithTimestamp(`準備記錄 Bonsale 通話結果 - 客戶: ${previousToCallRecord.memberName} (${previousToCallRecord.customerId}), 分機: ${previousToCallRecord.dn}`);
       
-      // 分析通話狀態
-      if (previousStatus.participants && previousStatus.participants.length > 0) {
-        const participant = previousStatus.participants[0];
+      // 獲取該分機的當前狀態來判斷前一通電話的結果
+      if (this.caller && previousToCallRecord.dn) {
+        const callerInfo = this.caller.find(caller => caller.dn === previousToCallRecord.dn);
         
-        // 根據狀態判斷通話結果
-        // "Dialing" - 正在撥號
-        // "Connected" - 已接通
-        // 可以根據需要添加更多邏輯
-        switch (participant.status) {
-          case "Dialing":
-            logWithTimestamp(`分機 ${previousStatus.dn} 狀態為撥號中，記錄為未接通`);
-            break;
-          case "Connected":
-            logWithTimestamp(`分機 ${previousStatus.dn} 狀態為已接通，記錄為已接通`);
-            break;
-          default:
-            warnWithTimestamp(`分機 ${previousStatus.dn} 狀態為未知，無法記錄`);
+        if (callerInfo && callerInfo.participants && callerInfo.participants.length > 0) {
+          const participant = callerInfo.participants[0];
+          
+          // 根據狀態判斷通話結果
+          // "Dialing" - 正在撥號
+          // "Connected" - 已接通
+          // 可以根據需要添加更多邏輯
+          switch (participant.status) {
+            case "Dialing":
+              logWithTimestamp(`分機 ${previousToCallRecord.dn} 狀態為撥號中，前一通電話記錄為未接通`);
+              break;
+            case "Connected":
+              logWithTimestamp(`分機 ${previousToCallRecord.dn} 狀態為已接通，前一通電話記錄為已接通`);
+              break;
+            default:
+              warnWithTimestamp(`分機 ${previousToCallRecord.dn} 狀態為未知，無法記錄前一通電話結果`);
+          }
+        } else {
+          logWithTimestamp(`分機 ${previousToCallRecord.dn} 目前空閒，前一通電話已結束`);
         }
       }
       

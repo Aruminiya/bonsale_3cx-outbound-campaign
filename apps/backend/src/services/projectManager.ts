@@ -2,6 +2,17 @@ import redisClient from './redis';
 import Project from '../class/project';
 import { logWithTimestamp, errorWithTimestamp } from '../util/timestamp';
 
+// 定義當前撥打記錄的類型
+type CurrentToCallRecord = Array<{
+  customerId: string;
+  memberName: string;
+  phone: string;
+  status: "Dialing" | "Connected";
+  projectId: string;
+  dn?: string; // 撥打的分機號碼
+  dialTime?: string; // 撥打時間
+} | null> | null;
+
 export class ProjectManager {
   private static readonly PROJECT_PREFIX = 'project:';
   private static readonly ACTIVE_PROJECTS_SET = 'active_projects';
@@ -22,6 +33,7 @@ export class ProjectManager {
         error: project.error || '',
         access_token: project.access_token || '',
         caller: project.caller ? JSON.stringify(project.caller) : '',
+        currentToCall: project.currentToCall ? JSON.stringify(project.currentToCall) : '',
         agentQuantity: project.agentQuantity?.toString() || '0',
         // ws_3cx 不儲存，因為 WebSocket 無法序列化
         createdAt: new Date().toISOString(),
@@ -158,6 +170,22 @@ export class ProjectManager {
       logWithTimestamp(`專案 ${projectId} Caller 資訊已更新`);
     } catch (error) {
       errorWithTimestamp('更新專案 Caller 資訊失敗:', error);
+      throw error;
+    }
+  }
+
+  // 更新專案的當前撥打記錄
+  static async updateProjectCurrentToCall(projectId: string, currentToCall: CurrentToCallRecord): Promise<void> {
+    try {
+      const projectKey = `${this.PROJECT_PREFIX}${projectId}`;
+      await redisClient.hSet(projectKey, {
+        currentToCall: JSON.stringify(currentToCall),
+        updatedAt: new Date().toISOString()
+      });
+      
+      logWithTimestamp(`專案 ${projectId} 當前撥打記錄已更新`);
+    } catch (error) {
+      errorWithTimestamp('更新專案當前撥打記錄失敗:', error);
       throw error;
     }
   }
