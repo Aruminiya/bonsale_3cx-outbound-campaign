@@ -332,6 +332,17 @@ declare global {
     payload: T
   };
 
+  // 撥打記錄型別
+  interface ToCallRecord {
+    customerId: string;
+    memberName: string;
+    phone: string;
+    status: "Dialing" | "Connected";
+    projectId: string;
+    dn?: string;
+    dialTime?: string;
+  }
+
   // WebSocket 訊息中的專案資料結構
   interface WebSocketProject {
     projectId: string;
@@ -361,6 +372,7 @@ declare global {
         dn: string;
       }>;
     }>;
+    currentToCall: ToCallRecord[] | null;
     access_token: string;
     createdAt: string;
     updatedAt: string;

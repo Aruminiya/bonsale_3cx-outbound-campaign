@@ -75,7 +75,8 @@ export class ProjectManager {
         projectData.state as 'active' | 'stop',
         projectData.error || null,
         projectData.access_token || null,
-        projectData.caller ? JSON.parse(projectData.caller) : null, // 解析 JSON 字串
+        projectData.caller ? JSON.parse(projectData.caller) : null,
+        projectData.currentToCall =  projectData.currentToCall ? JSON.parse(projectData.currentToCall) : [],
         parseInt(projectData.agentQuantity) || 0
       );
 

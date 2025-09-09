@@ -489,6 +489,83 @@ export default function Home() {
                               </Box>
                             ))}
                             
+                            {/* 當前撥打記錄 */}
+                            {projectWsData.currentToCall && projectWsData.currentToCall.length > 0 && (
+                              <Box 
+                                sx={{ 
+                                  marginTop: '12px', 
+                                  padding: '12px', 
+                                  backgroundColor: '#f3e5f5', 
+                                  borderRadius: '8px',
+                                  border: '1px solid #9c27b0'
+                                }}
+                              >
+                                <Box sx={{ fontSize: '0.8rem', fontWeight: 'bold', color: '#666', marginBottom: '8px' }}>
+                                  📞 當前撥打記錄：
+                                </Box>
+                                <Stack spacing={1}>
+                                  {projectWsData.currentToCall.map((callRecord, callIndex) => (
+                                    <Box 
+                                      key={`call-${callIndex}`}
+                                      sx={{
+                                        backgroundColor: 'white',
+                                        padding: '8px',
+                                        borderRadius: '4px',
+                                        border: '1px solid #ddd'
+                                      }}
+                                    >
+                                      <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+                                        <Chip
+                                          label={`分機: ${callRecord.dn}`}
+                                          size="small"
+                                          sx={{ 
+                                            bgcolor: (theme) => theme.palette.primary.main,
+                                            color: 'white',
+                                            fontWeight: 'bold'
+                                          }}
+                                        />
+                                        <Chip
+                                          label={`狀態: ${callRecord.status}`}
+                                          size="small"
+                                          sx={{ 
+                                            bgcolor: (theme) => 
+                                              callRecord.status === 'Dialing' ? theme.palette.warning.main :
+                                              callRecord.status === 'Connected' ? theme.palette.success.main :
+                                              theme.palette.grey[500],
+                                            color: 'white',
+                                            fontWeight: 'bold'
+                                          }}
+                                        />
+                                        <Chip
+                                          label={`客戶: ${callRecord.memberName}`}
+                                          variant="outlined"
+                                          size="small"
+                                          sx={{ fontWeight: 'bold' }}
+                                        />
+                                        <Chip
+                                          label={`電話: ${callRecord.phone}`}
+                                          variant="outlined"
+                                          size="small"
+                                        />
+                                        {callRecord.dialTime && (
+                                          <Chip
+                                            label={`撥打時間: ${new Date(callRecord.dialTime).toLocaleString('zh-TW', {
+                                              hour: '2-digit',
+                                              minute: '2-digit',
+                                              second: '2-digit'
+                                            })}`}
+                                            variant="outlined"
+                                            size="small"
+                                            sx={{ fontSize: '0.7rem', color: '#666' }}
+                                          />
+                                        )}
+                                      </Stack>
+                                    </Box>
+                                  ))}
+                                </Stack>
+                              </Box>
+                            )}
+
                             {/* 專案統計資訊 */}
                             <Box 
                               sx={{ 
@@ -506,6 +583,14 @@ export default function Home() {
                                   size="small"
                                   sx={{ fontSize: '0.7rem' }}
                                 />
+                                {projectWsData.currentToCall && (
+                                  <Chip
+                                    label={`當前撥打: ${projectWsData.currentToCall.length} 通`}
+                                    variant="outlined"
+                                    size="small"
+                                    sx={{ fontSize: '0.7rem', color: '#9c27b0' }}
+                                  />
+                                )}
                               </Stack>
                             </Box>
                           </Stack>

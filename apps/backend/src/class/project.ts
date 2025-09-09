@@ -67,7 +67,7 @@ export default class Project {
   error: string | null;
   access_token: string | null;
   caller: Array<Caller> | null;
-  currentToCall: Array<ToCallRecord> | null = null; // 保存當前撥打記錄
+  currentToCall: Array<ToCallRecord> = []; // 保存當前撥打記錄
   agentQuantity: number | 0;
   private previousToCall: Array<ToCallRecord> | null = null; // 保存前一筆撥打記錄
   private wsManager: WebSocketManager | null = null;
@@ -95,6 +95,7 @@ export default class Project {
     error: string | null = null,
     access_token: string | null = null,
     caller: Array<Caller> | null = null,
+    currentToCall: Array<ToCallRecord> = [],
     agentQuantity: number | 0
   ) {
     this.grant_type = 'client_credentials';
@@ -106,6 +107,7 @@ export default class Project {
     this.error = error;
     this.access_token = access_token;
     this.caller = caller;
+    this.currentToCall = currentToCall;
     this.agentQuantity = agentQuantity;
     
     // 初始化 TokenManager
@@ -179,6 +181,7 @@ export default class Project {
         null,
         access_token,
         callerData,
+        [],
         agentQuantity
       );
 

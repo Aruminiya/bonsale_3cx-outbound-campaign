@@ -29,6 +29,7 @@ export async function broadcastAllProjects(
           client_id: p.client_id,
           agentQuantity: p.agentQuantity,
           caller: p.caller,
+          currentToCall: p.currentToCall || null, // 直接使用，因為 Project 實例中已經是正確的型別
           access_token: p.access_token ? '***' : null, // 隱藏敏感資訊
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
