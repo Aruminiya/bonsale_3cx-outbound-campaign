@@ -337,6 +337,8 @@ declare global {
     customerId: string;
     memberName: string;
     phone: string;
+    description: string | null;
+    description2: string | null;
     status: "Dialing" | "Connected";
     projectId: string;
     dn?: string;
