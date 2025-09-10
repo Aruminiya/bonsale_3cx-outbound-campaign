@@ -56,7 +56,7 @@ async function getOutbound(
 async function updateCallStatus(
   projectId: string,
   customerId: string,
-  callStatus: string
+  callStatus: number
 ): Promise<PutCallStatusApiResult> {
   try {
     const response = await axiosBonsaleInstance.put(`${host}/project/${projectId}/customer/${customerId}/callStatus`, { callStatus });

@@ -8,7 +8,7 @@ import { broadcastAllProjects } from '../components/broadcast';
 import { WebSocketManager } from './webSocketManager';
 import { TokenManager } from './tokenManager';
 import { CallListManager } from './callListManager';
-import { getOutbound } from '../services/api/bonsale';
+import { getOutbound, updateCallStatus, updateDialUpdate, updateVisitRecord } from '../services/api/bonsale';
 import { Outbound } from '../types/bonsale/getOutbound';
 
 dotenv.config();
@@ -620,6 +620,8 @@ export default class Project {
         const previousCallForThisExtension = this.previousCallRecord.find(call => call?.dn === dn);
         if (previousCallForThisExtension) {
           // 有該分機的前一筆撥打記錄，執行寫紀錄到 Bonsale 裡面
+          console.log('現在要撥打電話了!', dn, '->', targetNumber);
+          console.log('準備記錄前一筆撥打記錄到 Bonsale:', previousCallForThisExtension);
           await this.recordBonsaleCallResult(previousCallForThisExtension);
         }
       }
@@ -637,43 +639,52 @@ export default class Project {
    * @param previousCallRecord 前一筆撥打記錄
    * @private
    */
-  private async recordBonsaleCallResult(previousCallRecord: {
-    customerId: string;
-    memberName: string;
-    phone: string;
-    projectId: string;
-    dn?: string;
-    dialTime?: string;
-  }): Promise<void> {
+  private async recordBonsaleCallResult(previousCallRecord: CallRecord): Promise<void> {
     try {
       // TODO: 實作寫入 Bonsale 紀錄的邏輯
       // 這裡可以根據當前的 caller 狀態來判斷前一通電話的通話結果
+      if (!previousCallRecord) {
+        warnWithTimestamp('沒有前一筆撥打記錄可供寫入 Bonsale');
+        return;
+      }
       logWithTimestamp(`準備記錄 Bonsale 通話結果 - 客戶: ${previousCallRecord.memberName} (${previousCallRecord.customerId}), 分機: ${previousCallRecord.dn}`);
       
       // 獲取該分機的當前狀態來判斷前一通電話的結果
-      if (this.caller && previousCallRecord.dn) {
-        const callerInfo = this.caller.find(caller => caller.dn === previousCallRecord.dn);
-        
-        if (callerInfo && callerInfo.participants && callerInfo.participants.length > 0) {
-          const participant = callerInfo.participants[0];
-          
-          // 根據狀態判斷通話結果
-          // "Dialing" - 正在撥號
-          // "Connected" - 已接通
-          // 可以根據需要添加更多邏輯
-          switch (participant.status) {
-            case "Dialing":
-              logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為撥號中，前一通電話記錄為未接通`);
-              break;
-            case "Connected":
-              logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為已接通，前一通電話記錄為已接通`);
-              break;
-            default:
-              warnWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為未知，無法記錄前一通電話結果`);
-          }
-        } else {
-          logWithTimestamp(`分機 ${previousCallRecord.dn} 目前空閒，前一通電話已結束`);
-        }
+      const { status } = previousCallRecord;
+      // 根據狀態判斷通話結果
+      // "Dialing" - 正在撥號
+      // "Connected" - 已接通
+      // 可以根據需要添加更多邏輯
+      switch (status) {
+        case "Dialing":
+          logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為撥號中，前一通電話記錄為未接通`);
+          console.log(previousCallRecord)
+          await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 2); // 2 表示未接通 更新 Bonsale 撥號狀態 失敗
+          await updateDialUpdate(previousCallRecord.projectId, previousCallRecord.customerId); // 紀錄失敗​次​數 ​這樣​後端​的​抓取​失​敗​名​單才​能​記​次​數 給​我​指定​的​失敗​名​單
+          // TODO 這邊要再確認 description 跟 description2 要怎麼帶進去
+          if (!previousCallRecord.description || previousCallRecord.description.trim() === '') return;
+          if (!previousCallRecord.description2 || previousCallRecord.description2.trim() === '') return;
+          break;
+        case "Connected":
+          logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為已接通，前一通電話記錄為已接通`);
+          console.log(previousCallRecord)
+          await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 1); // 1 表示已接通 更新 Bonsale 撥號狀態 成功
+          const visitedAt = previousCallRecord.dialTime || new Date().toISOString(); // 使用撥打時間或當前時間
+          // 延遲 100 毫秒後再更新拜訪紀錄，確保狀態更新完成
+          setTimeout(async () => {
+            await updateVisitRecord(  // 紀錄 ​寫入​訪談​紀錄 ( ​要​延遲​是​因為​ 後端​需要​時間​寫入​資料​庫 讓​抓​名​單邏輯​正常​ )
+              previousCallRecord.projectId, 
+              previousCallRecord.customerId,
+              'intro',
+              'admin',
+              visitedAt,
+              '撥打成功',
+              '撥打成功'
+            );
+          }, 100);
+          break;
+        default:
+          warnWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為未知，無法記錄前一通電話結果`);
       }
       
     } catch (error) {
