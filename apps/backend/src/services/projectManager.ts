@@ -7,6 +7,8 @@ type CurrentToCallRecord = Array<{
   customerId: string;
   memberName: string;
   phone: string;
+  description: string | null;
+  description2: string | null;
   status: "Dialing" | "Connected";
   projectId: string;
   dn?: string; // 撥打的分機號碼

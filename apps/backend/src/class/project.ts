@@ -26,6 +26,8 @@ type ToCallRecord = {
   customerId: string;
   memberName: string;
   phone: string;
+  description: string | null;
+  description2: string | null;
   status: "Dialing" | "Connected";
   projectId: string;
   dn?: string; // 撥打的分機號碼
@@ -562,6 +564,8 @@ export default class Project {
             customerId: nextCallItem.customerId,
             memberName: nextCallItem.memberName,
             phone: nextCallItem.phone,
+            description: nextCallItem.description || null,
+            description2: nextCallItem.description2 || null,
             status: "Dialing", // 初始狀態為撥號中
             projectId: nextCallItem.projectId,
             dn: dn,
@@ -768,11 +772,12 @@ export default class Project {
         logWithTimestamp(`第一輪獲取到 ${firstList.length} 筆名單`);
       }
 
-      // 驗證名單資料
+      // 驗證名單資料（只檢查必要欄位）
       const validItems = outboundList.filter(item => 
         item.customerId && 
         item.customer?.phone && 
         item.customer.phone.trim() !== ''
+        // description 和 description2 可以為 null，不需要檢查
       );
 
       if (validItems.length === 0) {
@@ -790,7 +795,9 @@ export default class Project {
           item.projectId,
           item.customerId,
           item.customer?.memberName || '未知客戶',
-          item.customer?.phone || ''
+          item.customer?.phone || '',
+          item.description || null, // description
+          item.description2 || null  // description2
         );
         return CallListManager.addCallListItem(callListItem);
       });

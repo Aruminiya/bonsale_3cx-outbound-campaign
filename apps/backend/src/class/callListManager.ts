@@ -12,6 +12,8 @@ export class CallListManager {
   customerId: string;            // 客戶 ID
   memberName: string;            // 客戶會員名稱
   phone: string;                 // 電話號碼
+  description: string | null = null; // 描述或備註
+  description2: string | null = null; // 第二個描述或備註
   createdAt: string;             // 建立時間 (ISO string)
   updatedAt: string;             // 更新時間 (ISO string)
 
@@ -19,12 +21,16 @@ export class CallListManager {
     projectId: string,
     customerId: string,
     memberName: string,
-    phone: string
+    phone: string,
+    description: string | null,
+    description2: string | null
   ) {
     this.projectId = projectId;
     this.customerId = customerId;
     this.memberName = memberName;
     this.phone = phone;
+    this.description = description;
+    this.description2 = description2;
     this.createdAt = new Date().toISOString();
     this.updatedAt = new Date().toISOString();
   }
@@ -52,6 +58,8 @@ export class CallListManager {
         customerId: callListItem.customerId,
         memberName: callListItem.memberName,
         phone: callListItem.phone,
+        description: callListItem.description,
+        description2: callListItem.description2,
         projectId: callListItem.projectId,
         createdAt: callListItem.createdAt,
         updatedAt: callListItem.updatedAt
@@ -174,7 +182,9 @@ export class CallListManager {
         itemData.projectId,
         itemData.customerId,
         itemData.memberName,
-        itemData.phone
+        itemData.phone,
+        itemData.description,
+        itemData.description2
       );
       
       // 設置原始的時間戳

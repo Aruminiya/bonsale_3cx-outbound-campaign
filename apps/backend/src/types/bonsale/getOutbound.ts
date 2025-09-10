@@ -190,6 +190,7 @@ export interface Outbound {
   ownerUsername: string;
   ownerUser: User;
   description: string;
+  description2: string;
   createdAt: string;
   createUsername: string;
   createdUser: User;
