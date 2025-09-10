@@ -526,6 +526,9 @@ export default class Project {
         
         // 從 Redis 獲取下一個要撥打的電話號碼
         const nextCallItem = await CallListManager.getNextCallItem(this.projectId);
+
+        // 檢查並補充撥號名單（如果數量不足）
+        await this.checkAndReplenishCallList();
         
         if (nextCallItem) {
           // 初始化陣列（如果需要）
@@ -672,6 +675,37 @@ export default class Project {
     } catch (error) {
       errorWithTimestamp('記錄 Bonsale 通話結果失敗:', error);
       // 不拋出錯誤，避免影響主要的外撥流程
+    }
+  }
+
+  /**
+   * 檢查並補充撥號名單
+   * 如果 Redis 中的名單數量低於分機數量的 2 倍，則自動從 Bonsale 拉取新名單
+   * @private
+   */
+  private async checkAndReplenishCallList(): Promise<void> {
+    try {
+      // 獲取當前 Redis 中的撥號名單數量
+      const currentCount = await CallListManager.getCallListCount(this.projectId);
+      const minimumRequired = this.agentQuantity * 2;
+
+      logWithTimestamp(`📊 專案 ${this.projectId} 撥號名單檢查 - 當前: ${currentCount}, 最低需求: ${minimumRequired} (分機數 ${this.agentQuantity} x 2)`);
+
+      if (currentCount < minimumRequired) {
+        logWithTimestamp(`🔄 撥號名單不足，開始自動補充 - 專案: ${this.projectId}`);
+        
+        // 調用現有的 getBonsaleOutboundCallList 方法來補充名單
+        await this.getBonsaleOutboundCallList();
+        
+        // 再次檢查補充後的數量
+        const newCount = await CallListManager.getCallListCount(this.projectId);
+        logWithTimestamp(`✅ 撥號名單補充完成 - 專案: ${this.projectId}, 補充前: ${currentCount}, 補充後: ${newCount}`);
+      } else {
+        logWithTimestamp(`✅ 撥號名單充足 - 專案: ${this.projectId}, 當前: ${currentCount}`);
+      }
+    } catch (error) {
+      errorWithTimestamp(`❌ 檢查並補充撥號名單失敗 - 專案: ${this.projectId}:`, error);
+      // 不拋出錯誤，避免影響主要的撥打流程
     }
   }
 
