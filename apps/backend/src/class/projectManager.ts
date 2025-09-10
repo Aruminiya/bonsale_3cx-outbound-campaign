@@ -64,7 +64,7 @@ export class ProjectManager {
         projectData.error || null,
         projectData.access_token || null,
         projectData.caller ? JSON.parse(projectData.caller) : null,
-        projectData.currentToCall ? JSON.parse(projectData.currentToCall) : [],
+        projectData.latestCallRecord ? JSON.parse(projectData.latestCallRecord) : [],
         parseInt(projectData.agentQuantity) || 0
       );
 

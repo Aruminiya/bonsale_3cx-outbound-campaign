@@ -490,7 +490,7 @@ export default function Home() {
                             ))}
                             
                             {/* 當前撥打記錄 */}
-                            {projectWsData.currentToCall && projectWsData.currentToCall.length > 0 && (
+                            {projectWsData.latestCallRecord && projectWsData.latestCallRecord.length > 0 && (
                               <Box 
                                 sx={{ 
                                   marginTop: '12px', 
@@ -504,7 +504,7 @@ export default function Home() {
                                   📞 當前撥打記錄：
                                 </Box>
                                 <Stack spacing={1}>
-                                  {projectWsData.currentToCall.map((callRecord, callIndex) => (
+                                  {projectWsData.latestCallRecord.map((callRecord, callIndex) => (
                                     <Box 
                                       key={`call-${callIndex}`}
                                       sx={{
@@ -583,9 +583,9 @@ export default function Home() {
                                   size="small"
                                   sx={{ fontSize: '0.7rem' }}
                                 />
-                                {projectWsData.currentToCall && (
+                                {projectWsData.latestCallRecord && (
                                   <Chip
-                                    label={`當前撥打: ${projectWsData.currentToCall.length} 通`}
+                                    label={`當前撥打: ${projectWsData.latestCallRecord.length} 通`}
                                     variant="outlined"
                                     size="small"
                                     sx={{ fontSize: '0.7rem', color: '#9c27b0' }}

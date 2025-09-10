@@ -333,7 +333,7 @@ declare global {
   };
 
   // 撥打記錄型別
-  interface ToCallRecord {
+  interface CallRecord {
     customerId: string;
     memberName: string;
     phone: string;
@@ -374,7 +374,7 @@ declare global {
         dn: string;
       }>;
     }>;
-    currentToCall: ToCallRecord[] | null;
+    latestCallRecord: CallRecord[] | null;
     access_token: string;
     createdAt: string;
     updatedAt: string;

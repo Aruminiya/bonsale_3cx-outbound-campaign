@@ -3,7 +3,7 @@ import Project from '../class/project';
 import { logWithTimestamp, errorWithTimestamp } from '../util/timestamp';
 
 // 定義當前撥打記錄的類型
-type CurrentToCallRecord = Array<{
+type CurrentCallRecord = Array<{
   customerId: string;
   memberName: string;
   phone: string;
@@ -35,7 +35,7 @@ export class ProjectManager {
         error: project.error || '',
         access_token: project.access_token || '',
         caller: project.caller ? JSON.stringify(project.caller) : '',
-        currentToCall: project.currentToCall ? JSON.stringify(project.currentToCall) : '',
+        latestCallRecord: project.latestCallRecord ? JSON.stringify(project.latestCallRecord) : '',
         agentQuantity: project.agentQuantity?.toString() || '0',
         // ws_3cx 不儲存，因為 WebSocket 無法序列化
         createdAt: new Date().toISOString(),
@@ -78,7 +78,7 @@ export class ProjectManager {
         projectData.error || null,
         projectData.access_token || null,
         projectData.caller ? JSON.parse(projectData.caller) : null,
-        projectData.currentToCall =  projectData.currentToCall ? JSON.parse(projectData.currentToCall) : [],
+        projectData.latestCallRecord =  projectData.latestCallRecord ? JSON.parse(projectData.latestCallRecord) : [],
         parseInt(projectData.agentQuantity) || 0
       );
 
@@ -178,11 +178,11 @@ export class ProjectManager {
   }
 
   // 更新專案的當前撥打記錄
-  static async updateProjectCurrentToCall(projectId: string, currentToCall: CurrentToCallRecord): Promise<void> {
+  static async updateProjectLatestCallRecord(projectId: string, latestCallRecord: CurrentCallRecord): Promise<void> {
     try {
       const projectKey = `${this.PROJECT_PREFIX}${projectId}`;
       await redisClient.hSet(projectKey, {
-        currentToCall: JSON.stringify(currentToCall),
+        latestCallRecord: JSON.stringify(latestCallRecord),
         updatedAt: new Date().toISOString()
       });
       
