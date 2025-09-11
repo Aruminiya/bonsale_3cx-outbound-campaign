@@ -76,6 +76,8 @@ export default class Project {
   private wsManager: WebSocketManager | null = null;
   private tokenManager: TokenManager;
   private throttledMessageHandler: DebouncedFunc<(broadcastWs: WebSocketServer, data: Buffer) => Promise<void>> | null = null;
+  private idleCheckTimer: NodeJS.Timeout | null = null; // 空閒檢查定時器
+  private broadcastWsRef: WebSocketServer | undefined = undefined; // 保存 WebSocket 引用
 
   /**
    * Project 類別構造函數
@@ -841,6 +843,9 @@ export default class Project {
       logWithTimestamp(`📞 執行外撥邏輯 - 專案: ${this.projectId}`);
       await this.outboundCall(broadcastWs);
       
+      // 啟動空閒檢查定時器
+      this.startIdleCheck(broadcastWs);
+      
       logWithTimestamp(`✅ WebSocket ${context} - 初始化完成`);
     } catch (error) {
       errorWithTimestamp(`❌ WebSocket ${context}後初始化時發生錯誤:`, error);
@@ -894,6 +899,74 @@ export default class Project {
   }
 
   /**
+   * 開始空閒檢查定時器
+   * @param broadcastWs 廣播 WebSocket 伺服器實例
+   * @private
+   */
+  private startIdleCheck(broadcastWs?: WebSocketServer): void {
+    // 先停止現有的定時器（如果有的話）
+    this.stopIdleCheck();
+
+    // 保存 WebSocket 引用
+    this.broadcastWsRef = broadcastWs;
+
+    // 設定 30 秒檢查一次空閒狀態
+    this.idleCheckTimer = setInterval(async () => {
+      try {
+        await this.checkIdleAndTriggerOutbound();
+      } catch (error) {
+        errorWithTimestamp(`空閒檢查時發生錯誤 - 專案 ${this.projectId}:`, error);
+      }
+    }, 30000); // 30 秒檢查一次
+
+    logWithTimestamp(`🕰️ 專案 ${this.projectId} 空閒檢查定時器已啟動（30秒間隔）`);
+  }
+
+  /**
+   * 停止空閒檢查定時器
+   * @private
+   */
+  private stopIdleCheck(): void {
+    if (this.idleCheckTimer) {
+      clearInterval(this.idleCheckTimer);
+      this.idleCheckTimer = null;
+      logWithTimestamp(`⏹️ 專案 ${this.projectId} 空閒檢查定時器已停止`);
+    }
+  }
+
+  /**
+   * 檢查空閒狀態並觸發外撥
+   * @private
+   */
+  private async checkIdleAndTriggerOutbound(): Promise<void> {
+    // 檢查專案狀態
+    if (this.state !== 'active') {
+      return;
+    }
+
+    // 檢查是否有空閒分機
+    if (!this.caller || this.caller.length === 0) {
+      return;
+    }
+
+    // 檢查是否有空閒且非忙碌的分機
+    const hasIdleExtension = this.caller.some(caller => {
+      // 檢查分機是否空閒（沒有通話中）
+      const isIdle = !caller.participants || caller.participants.length === 0;
+      
+      // 檢查分機是否非忙碌狀態
+      const isNotBusy = !extensionStatusManager.isExtensionBusy(caller.dn);
+      
+      return isIdle && isNotBusy;
+    });
+
+    if (hasIdleExtension) {
+      logWithTimestamp(`🔄 檢測到空閒分機，重新觸發外撥邏輯 - 專案: ${this.projectId}`);
+      await this.outboundCall(this.broadcastWsRef);
+    }
+  }
+
+  /**
    * 檢查專案是否還有活躍的通話
    * @returns boolean - true 如果還有通話，false 如果沒有
    */
@@ -943,6 +1016,9 @@ export default class Project {
    */
   async executeCompleteStop(broadcastWs: WebSocketServer): Promise<void> {
     try {
+      // 停止空閒檢查定時器
+      this.stopIdleCheck();
+      
       // 斷開 WebSocket 連接
       await this.disconnect3cxWebSocket();
       
@@ -991,6 +1067,9 @@ export default class Project {
    * @returns Promise<void>
    */
   disconnect3cxWebSocket(): Promise<void> {
+    // 停止空閒檢查定時器
+    this.stopIdleCheck();
+    
     if (this.wsManager) {
       return this.wsManager.disconnect();
     }
