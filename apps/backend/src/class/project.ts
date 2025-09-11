@@ -10,6 +10,7 @@ import { TokenManager } from './tokenManager';
 import { CallListManager } from './callListManager';
 import { getOutbound, updateCallStatus, updateDialUpdate, updateVisitRecord } from '../services/api/bonsale';
 import { Outbound } from '../types/bonsale/getOutbound';
+import { extensionStatusManager } from '../components/extensionStatusManager';
 
 dotenv.config();
 
@@ -190,6 +191,9 @@ export default class Project {
       // 儲存專案到 Redis
       await ProjectManager.saveProject(project);
       
+      // 啟動分機狀態管理器
+      extensionStatusManager.startPolling(access_token);
+      
       logWithTimestamp(`專案 ${projectId} 初始化完成並儲存到 Redis`);
       return project;
       
@@ -206,6 +210,8 @@ export default class Project {
   updateAccessToken(newAccessToken: string): void {
     this.access_token = newAccessToken;
     this.tokenManager.updateAccessToken(newAccessToken);
+    // 同步更新分機狀態管理器的 token
+    extensionStatusManager.updateAccessToken(newAccessToken);
   }
 
   /**
@@ -341,6 +347,8 @@ export default class Project {
         this.access_token = currentToken;
         // Token 已更新，需要重新建立 WebSocket 連接
         await this.handleTokenUpdateWebSocketReconnect(broadcastWs);
+        // 同時更新分機狀態管理器的 token
+        extensionStatusManager.updateAccessToken(currentToken);
       }
 
       // 步驟三: 獲取並更新 caller 資訊
@@ -485,6 +493,12 @@ export default class Project {
       // 檢查分機是否空閒
       if (!participants || participants.length === 0) {
         logWithTimestamp(`分機 ${dn} 空閒，可以撥打電話`);
+
+        // 檢查分機人員是否設定為忙碌狀態
+        if (extensionStatusManager.isExtensionBusy(dn)) {
+          warnWithTimestamp(`分機 ${dn} 人員設定為忙碌狀態，暫停撥打`);
+          return;
+        }
         
         // 從 Redis 獲取下一個要撥打的電話號碼
         const nextCallItem = await CallListManager.getNextCallItem(this.projectId);
@@ -601,7 +615,6 @@ export default class Project {
    */
   private async recordBonsaleCallResult(previousCallRecord: CallRecord): Promise<void> {
     try {
-      // TODO: 實作寫入 Bonsale 紀錄的邏輯
       // 這裡可以根據當前的 caller 狀態來判斷前一通電話的通話結果
       if (!previousCallRecord) {
         warnWithTimestamp('沒有前一筆撥打記錄可供寫入 Bonsale');
@@ -932,6 +945,10 @@ export default class Project {
     try {
       // 斷開 WebSocket 連接
       await this.disconnect3cxWebSocket();
+      
+      // 停止分機狀態管理器（只有在沒有其他活躍專案時才停止）
+      // 註: 這裡暫時不停止 extensionStatusManager，因為它是單例，可能被其他專案使用
+      // 如果需要在所有專案停止時停止管理器，應該在 ProjectManager 中統一管理
       
       // 從 Redis 移除專案
       await ProjectManager.removeProject(this.projectId);

@@ -152,3 +152,26 @@ export async function getUsers(token: string, agentDn: string) {
   }
 }
 
+// 取得全部 Agent 使用者
+export async function getAllUsers(token: string, queryString: string) {
+  try {
+    const response = await axios.get(`${host}/xapi/v1/Users?${queryString}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    // console.log('成功 獲取當前 Queues 的列表:', response.data);
+    // 回傳 API 的回應
+    return { success: true, data: response.data }; // 返回成功
+  } catch (error: unknown) {
+    const axiosError = error as AxiosError;
+    console.error('Error getAllUsers request:', axiosError.message);
+    return {
+      success: false,
+      error: {
+        errorCode: axiosError.response?.status?.toString() || '500',
+        error: `Error getAllUsers request: ${axiosError.message}`,
+      },
+    }; // 返回錯誤
+  }
+}
