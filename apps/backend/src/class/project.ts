@@ -239,48 +239,8 @@ export default class Project {
         }
 
         // 創建新的 WebSocket 管理器
-        this.wsManager = new WebSocketManager(
-          {
-            url: `${WS_HOST_3CX}/callcontrol/ws`,
-            headers: {
-              Authorization: `Bearer ${this.access_token}`
-            },
-            heartbeatInterval: 30000, // 30秒心跳
-            reconnectDelay: 3000, // 3秒重連延遲
-            maxReconnectAttempts: 5
-          },
-          {
-            onOpen: async () => {
-              logWithTimestamp('3CX WebSocket 連接成功');
-              // 生成測試撥號名單（agentQuantity 的 3 倍）
-              await this.getBonsaleOutboundCallList();
-              try {
-                await this.outboundCall(broadcastWs);
-              } catch (error) {
-                errorWithTimestamp('初始化專案時發生錯誤:', error);
-              }
-            },
-            onMessage: (data) => {
-              if (broadcastWs) {
-                this.handleWebSocketMessage(broadcastWs, data);
-              }
-            },
-            onError: (error) => {
-              errorWithTimestamp('3CX WebSocket 錯誤:', error);
-            },
-            onClose: (code, reason) => {
-              logWithTimestamp(`3CX WebSocket 關閉: ${code} - ${reason}`);
-            },
-            onReconnect: async () => {
-              logWithTimestamp('3CX WebSocket 重新連接成功，重新執行初始化');
-              try {
-                await this.outboundCall(broadcastWs);
-              } catch (error) {
-                errorWithTimestamp('重連後初始化專案時發生錯誤:', error);
-              }
-            }
-          }
-        );
+        const wsConfig = this.createWebSocketManagerConfig(broadcastWs);
+        this.wsManager = new WebSocketManager(wsConfig.connection, wsConfig.handlers);
 
         // 建立連接
         await this.wsManager.connect();
@@ -845,6 +805,72 @@ export default class Project {
   }
 
   /**
+   * WebSocket 連接成功後的統一初始化邏輯
+   * @param broadcastWs 廣播 WebSocket 伺服器實例
+   * @param context 上下文描述（用於日誌）
+   * @private
+   */
+  private async handleWebSocketInitialization(broadcastWs?: WebSocketServer, context: string = '3CX WebSocket 連接成功'): Promise<void> {
+    try {
+      logWithTimestamp(`🔗 3CX WebSocket ${context}`);
+      
+      // 檢查專案狀態，只有在 active 狀態下才執行初始化
+      if (this.state !== 'active') {
+        logWithTimestamp(`📊 專案 ${this.projectId} 狀態為 ${this.state}，跳過 WebSocket 初始化`);
+        return;
+      }
+      
+      // 檢查並補充撥號名單
+      logWithTimestamp(`📋 檢查並補充撥號名單 - 專案: ${this.projectId}`);
+      await this.checkAndReplenishCallList();
+      
+      // 執行外撥邏輯
+      logWithTimestamp(`📞 執行外撥邏輯 - 專案: ${this.projectId}`);
+      await this.outboundCall(broadcastWs);
+      
+      logWithTimestamp(`✅ WebSocket ${context} - 初始化完成`);
+    } catch (error) {
+      errorWithTimestamp(`❌ WebSocket ${context}後初始化時發生錯誤:`, error);
+      // 不拋出錯誤，避免影響 WebSocket 連接
+    }
+  }
+
+  /**
+   * 創建 WebSocket 管理器配置
+   * @param broadcastWs 廣播 WebSocket 伺服器實例
+   * @returns WebSocket 管理器配置對象
+   * @private
+   */
+  private createWebSocketManagerConfig(broadcastWs?: WebSocketServer) {
+    return {
+      connection: {
+        url: `${WS_HOST_3CX}/callcontrol/ws`,
+        headers: {
+          Authorization: `Bearer ${this.access_token}`
+        },
+        heartbeatInterval: 30000, // 30秒心跳
+        reconnectDelay: 3000, // 3秒重連延遲
+        maxReconnectAttempts: 5
+      },
+      handlers: {
+        onOpen: () => this.handleWebSocketInitialization(broadcastWs, '3CX WebSocket 連接成功'),
+        onMessage: (data: Buffer) => {
+          if (broadcastWs) {
+            this.handleWebSocketMessage(broadcastWs, data);
+          }
+        },
+        onError: (error: Error) => {
+          errorWithTimestamp('3CX WebSocket 錯誤:', error);
+        },
+        onClose: (code: number, reason: Buffer) => {
+          logWithTimestamp(`3CX WebSocket 關閉: ${code} - ${reason.toString()}`);
+        },
+        onReconnect: () => this.handleWebSocketInitialization(broadcastWs, '3CX WebSocket 重新連接成功')
+      }
+    };
+  }
+
+  /**
    * 延遲執行
    * @param ms 延遲時間（毫秒）
    * @returns Promise<void>
@@ -930,35 +956,12 @@ export default class Project {
         logWithTimestamp('Token 已更新，重新建立 WebSocket 連接');
         await this.wsManager.disconnect();
         
-        // 重新創建 WebSocket 管理器，使用新的 token
-        this.wsManager = new WebSocketManager(
-          {
-            url: `${WS_HOST_3CX}/callcontrol/ws`,
-            headers: {
-              Authorization: `Bearer ${this.access_token}`
-            },
-            heartbeatInterval: 30000,
-            reconnectDelay: 3000,
-            maxReconnectAttempts: 5
-          },
-          {
-            onOpen: async () => {
-              logWithTimestamp('3CX WebSocket 重新連接成功（token 更新後）');
-            },
-            onMessage: (data) => {
-              if (broadcastWs) {
-                this.handleWebSocketMessage(broadcastWs, data);
-              }
-            },
-            onError: (error) => {
-              errorWithTimestamp('3CX WebSocket 錯誤:', error);
-            },
-            onClose: (code, reason) => {
-              logWithTimestamp(`3CX WebSocket 關閉: ${code} - ${reason}`);
-            }
-          }
-        );
+        // 重新創建 WebSocket 管理器，使用新的 token 和統一配置
+        const wsConfig = this.createWebSocketManagerConfig(broadcastWs);
+        // 更新 onOpen 回調以使用正確的上下文
+        wsConfig.handlers.onOpen = () => this.handleWebSocketInitialization(broadcastWs, '3CX WebSocket 重新連接成功（token 更新後）');
         
+        this.wsManager = new WebSocketManager(wsConfig.connection, wsConfig.handlers);
         await this.wsManager.connect();
       } catch (error) {
         errorWithTimestamp('Token 更新後重連 WebSocket 失敗:', error);
