@@ -560,10 +560,46 @@ export default class Project {
           
           // 有撥號名單，進行撥打
           logWithTimestamp(`準備撥打 - 客戶: ${nextCallItem.memberName} (${nextCallItem.customerId}), 電話: ${nextCallItem.phone}, 分機: ${dn}`);
+          console.log('============makeOutboundCall============');
           await this.makeOutboundCall(dn, device_id, nextCallItem.phone, 2000);
         } else {
-          // 沒有撥號名單，記錄信息
+          // 沒有撥號名單，但要檢查該分機是否有當前撥打記錄需要處理
           logWithTimestamp(`專案 ${this.projectId} 的撥號名單已空，分機 ${dn} 暫無可撥打號碼`);
+          
+          // 初始化陣列（如果需要）
+          if (!this.latestCallRecord) {
+            this.latestCallRecord = [];
+          }
+          if (!this.previousCallRecord) {
+            this.previousCallRecord = [];
+          }
+
+          // 檢查該分機是否有當前撥打記錄需要移動到 previousCallRecord
+          const existingCallIndex = this.latestCallRecord.findIndex(call => call?.dn === dn);
+          if (existingCallIndex >= 0) {
+            const existingCall = this.latestCallRecord[existingCallIndex];
+            if (existingCall) {
+              // 移動到 previousCallRecord
+              const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
+              if (prevCallIndex >= 0) {
+                this.previousCallRecord[prevCallIndex] = { ...existingCall };
+              } else {
+                this.previousCallRecord.push({ ...existingCall });
+              }
+              
+              // 從 latestCallRecord 中移除
+              this.latestCallRecord.splice(existingCallIndex, 1);
+              
+              // 同步更新到 Redis
+              await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
+              
+              logWithTimestamp(`保存分機 ${dn} 的最後一筆撥打記錄到 previousCallRecord - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
+            }
+          }
+          
+          // 即使沒有撥號名單，也要呼叫 makeOutboundCall 來處理前一通電話的結果
+          console.log('============makeOutboundCall (no target number)============');
+          await this.makeOutboundCall(dn, device_id, null, 2000);
         }
       } else {
         warnWithTimestamp(`分機 ${dn} 已有通話中，無法撥打下一通電話`);
@@ -581,7 +617,7 @@ export default class Project {
    * @param delayMs 延遲時間（毫秒），預設 1000ms
    * @private
    */
-  private async makeOutboundCall(dn: string, deviceId: string, targetNumber: string, delayMs: number = 1000): Promise<void> {
+  private async makeOutboundCall(dn: string, deviceId: string, targetNumber: string | null, delayMs: number = 1000): Promise<void> {
     try {
       if (!this.access_token) {
         throw new Error('access_token 為空');
@@ -593,15 +629,26 @@ export default class Project {
 
       if (this.previousCallRecord && this.previousCallRecord.length > 0) {
         // 找到該分機的前一筆撥打記錄
-        const previousCallForThisExtension = this.previousCallRecord.find(call => call?.dn === dn);
-        if (previousCallForThisExtension) {
-          // 有該分機的前一筆撥打記錄，執行寫紀錄到 Bonsale 裡面
-          console.log('現在要撥打電話了!', dn, '->', targetNumber);
-          console.log('準備記錄前一筆撥打記錄到 Bonsale:', previousCallForThisExtension);
-          await this.recordBonsaleCallResult(previousCallForThisExtension);
+        const previousCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
+        if (previousCallIndex >= 0) {
+          const previousCallForThisExtension = this.previousCallRecord[previousCallIndex];
+          if (previousCallForThisExtension) {
+            // 有該分機的前一筆撥打記錄，執行寫紀錄到 Bonsale 裡面
+            logWithTimestamp(`處理分機 ${dn} 的前一筆撥打記錄 - 客戶: ${previousCallForThisExtension.memberName} (${previousCallForThisExtension.customerId})`);
+            await this.recordBonsaleCallResult(previousCallForThisExtension);
+            
+            // 處理完成後，從 previousCallRecord 中移除該記錄，避免重複處理
+            this.previousCallRecord.splice(previousCallIndex, 1);
+            logWithTimestamp(`已移除分機 ${dn} 的已處理記錄，剩餘 previousCallRecord: ${this.previousCallRecord.length} 筆`);
+          }
         }
       }
+      if (!targetNumber) {
+        logWithTimestamp(`分機 ${dn} 無撥號名單，跳過撥打`);
+        return;
+      }
 
+      // 發起外撥
       await makeCall(this.access_token, dn, deviceId, "outbound", targetNumber);
       logWithTimestamp(`成功發起外撥: ${dn} -> ${targetNumber}`);
     } catch (error) {
@@ -633,7 +680,6 @@ export default class Project {
       switch (status) {
         case "Dialing":
           logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為撥號中，前一通電話記錄為未接通`);
-          console.log(previousCallRecord)
           await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 2); // 2 表示未接通 更新 Bonsale 撥號狀態 失敗
           await updateDialUpdate(previousCallRecord.projectId, previousCallRecord.customerId); // 紀錄失敗​次​數 ​這樣​後端​的​抓取​失​敗​名​單才​能​記​次​數 給​我​指定​的​失敗​名​單
           
