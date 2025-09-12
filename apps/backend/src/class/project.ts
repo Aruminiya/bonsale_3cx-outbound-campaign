@@ -636,15 +636,22 @@ export default class Project {
           console.log(previousCallRecord)
           await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 2); // 2 表示未接通 更新 Bonsale 撥號狀態 失敗
           await updateDialUpdate(previousCallRecord.projectId, previousCallRecord.customerId); // 紀錄失敗​次​數 ​這樣​後端​的​抓取​失​敗​名​單才​能​記​次​數 給​我​指定​的​失敗​名​單
+          
+          // 記錄完成後，移除使用過的撥號名單項目
+          await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
+          
           // TODO 這邊要再確認 description 跟 description2 要怎麼帶進去
           if (!previousCallRecord.description || previousCallRecord.description.trim() === '') return;
           if (!previousCallRecord.description2 || previousCallRecord.description2.trim() === '') return;
           break;
         case "Connected":
           logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為已接通，前一通電話記錄為已接通`);
-          console.log(previousCallRecord)
           await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 1); // 1 表示已接通 更新 Bonsale 撥號狀態 成功
           const visitedAt = previousCallRecord.dialTime || new Date().toISOString(); // 使用撥打時間或當前時間
+          
+          // 記錄完成後，移除使用過的撥號名單項目
+          await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
+          
           // 延遲 100 毫秒後再更新拜訪紀錄，確保狀態更新完成
           setTimeout(async () => {
             await updateVisitRecord(  // 紀錄 ​寫入​訪談​紀錄 ( ​要​延遲​是​因為​ 後端​需要​時間​寫入​資料​庫 讓​抓​名​單邏輯​正常​ )
@@ -707,7 +714,18 @@ export default class Project {
     try {
       logWithTimestamp(`開始從 Bonsale API 獲取專案 ${this.projectId} 的撥號名單`);
 
-      const limit = this.agentQuantity * 3;
+      // 獲取當前 Redis 中的撥號名單數量
+      const currentCount = await CallListManager.getCallListCount(this.projectId);
+      const maxAllowed = this.agentQuantity * 3; // Redis 存放上限：分機數量的 3 倍
+      
+      // 計算還能補充的數量
+      const spaceLeft = maxAllowed - currentCount;
+      if (spaceLeft <= 0) {
+        logWithTimestamp(`🚫 撥號名單已達上限 - 專案: ${this.projectId}, 當前: ${currentCount}, 上限: ${maxAllowed}`);
+        return;
+      }
+
+      const limit = this.agentQuantity * 5; // 拉取名單：分機數量的 5 倍
       let outboundList: Array<Outbound> = [];
 
       // 第一輪: 取得 callStatus = 0 的名單（待撥打）
@@ -758,32 +776,50 @@ export default class Project {
         logWithTimestamp(`第一輪獲取到 ${firstList.length} 筆名單`);
       }
 
-      // 驗證名單資料（只檢查必要欄位）
-      const validItems = outboundList.filter(item => 
-        item.customerId && 
-        item.customer?.phone && 
-        item.customer.phone.trim() !== ''
-        // description 和 description2 可以為 null，不需要檢查
-      );
+      // 驗證名單資料（只檢查必要欄位）並過濾重複
+      const validItems: Array<Outbound> = [];
+      
+      for (const item of outboundList) {
+        // 檢查必要欄位
+        if (!item.customerId || !item.customer?.phone || item.customer.phone.trim() === '') {
+          continue;
+        }
+        
+        // 檢查是否已存在於 Redis 中
+        const exists = await CallListManager.isCustomerExists(this.projectId, item.customerId);
+        if (exists) {
+          logWithTimestamp(`⚠️ 跳過重複客戶 - 客戶ID: ${item.customerId}, 姓名: ${item.customer?.memberName}`);
+          continue;
+        }
+        
+        validItems.push(item);
+        
+        // 檢查是否已達到 Redis 存放上限
+        if (validItems.length >= spaceLeft) {
+          logWithTimestamp(`✅ 已達到 Redis 存放上限 ${spaceLeft} 筆，停止過濾`);
+          break;
+        }
+      }
 
       if (validItems.length === 0) {
-        warnWithTimestamp('所有獲取的名單都缺少必要資訊（customerId 或 phone）');
+        warnWithTimestamp('過濾後沒有可用的新名單（全部重複或資料不完整）');
         return;
       }
 
-      if (validItems.length < outboundList.length) {
-        warnWithTimestamp(`過濾後剩餘 ${validItems.length}/${outboundList.length} 筆有效名單`);
-      }
+      logWithTimestamp(`📋 過濾結果 - 原始拉取: ${outboundList.length}/${limit}, 過濾後有效: ${validItems.length}, 將補充: ${Math.min(validItems.length, spaceLeft)}`);
 
-      // 批次處理撥號名單
-      const addPromises = validItems.map(item => {
+      // 批次處理撥號名單，只處理到 Redis 存放上限為止
+      const itemsToAdd = validItems.slice(0, spaceLeft);
+      const addPromises = itemsToAdd.map(item => {
         const callListItem = new CallListManager(
           item.projectId,
           item.customerId,
           item.customer?.memberName || '未知客戶',
           item.customer?.phone || '',
           item.description || null, // description
-          item.description2 || null  // description2
+          item.description2 || null, // description2
+          false, // dialing - 新項目預設為未撥打
+          null   // dialingAt - 新項目預設為 null
         );
         return CallListManager.addCallListItem(callListItem);
       });
@@ -796,7 +832,10 @@ export default class Project {
       ).length;
       const failCount = results.length - successCount;
 
-      logWithTimestamp(`✅ Bonsale 撥號名單處理完成 - 成功: ${successCount}, 失敗: ${failCount}`);
+      // 獲取最終數量
+      const finalCount = await CallListManager.getCallListCount(this.projectId);
+
+      logWithTimestamp(`✅ Bonsale 撥號名單補充完成 - 補充: ${successCount}/${itemsToAdd.length}, 失敗: ${failCount}, 最終總數: ${finalCount}/${maxAllowed}`);
       
       if (failCount > 0) {
         warnWithTimestamp(`有 ${failCount} 筆資料添加失敗`);

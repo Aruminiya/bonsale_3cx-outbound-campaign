@@ -16,6 +16,8 @@ export class CallListManager {
   description2: string | null = null; // 第二個描述或備註
   createdAt: string;             // 建立時間 (ISO string)
   updatedAt: string;             // 更新時間 (ISO string)
+  dialing: boolean = false;      // 是否正在撥打
+  dialingAt: string | null = null; // 撥打開始時間
 
   constructor(
     projectId: string,
@@ -23,7 +25,9 @@ export class CallListManager {
     memberName: string,
     phone: string,
     description: string | null,
-    description2: string | null
+    description2: string | null,
+    dialing: boolean = false,
+    dialingAt: string | null = null
   ) {
     this.projectId = projectId;
     this.customerId = customerId;
@@ -33,6 +37,8 @@ export class CallListManager {
     this.description2 = description2;
     this.createdAt = new Date().toISOString();
     this.updatedAt = new Date().toISOString();
+    this.dialing = dialing;
+    this.dialingAt = dialingAt;
   }
 
   /**
@@ -62,7 +68,9 @@ export class CallListManager {
         description2: callListItem.description2,
         projectId: callListItem.projectId,
         createdAt: callListItem.createdAt,
-        updatedAt: callListItem.updatedAt
+        updatedAt: callListItem.updatedAt,
+        dialing: false, // 初始狀態為未撥打
+        dialingAt: null // 撥打開始時間
       };
 
       await redisClient.hSet(callListKey, callListItem.customerId, JSON.stringify(itemData));
@@ -109,7 +117,40 @@ export class CallListManager {
   }
 
   /**
-   * 獲取下一個要撥打的電話號碼並移除該項目（原子性操作）
+   * 通話結束後移除使用過的撥號名單項目（在 recordBonsaleCallResult 後調用）
+   * @param projectId 專案 ID
+   * @param customerId 客戶 ID
+   * @returns Promise<boolean> 是否成功移除
+   */
+  static async removeUsedCallListItem(projectId: string, customerId: string): Promise<boolean> {
+    try {
+      const callListKey = this.getCallListKey(projectId);
+      
+      // 檢查項目是否存在
+      const exists = await redisClient.hExists(callListKey, customerId);
+      if (!exists) {
+        logWithTimestamp(`⚠️ 使用過的撥號名單項目不存在 - 專案: ${projectId}, 客戶: ${customerId}`);
+        return false;
+      }
+
+      // 刪除 hash field
+      const deletedCount = await redisClient.hDel(callListKey, customerId);
+      
+      if (deletedCount > 0) {
+        logWithTimestamp(`🗑️ 成功移除使用過的撥號名單項目 - 專案: ${projectId}, 客戶: ${customerId}`);
+        return true;
+      } else {
+        logWithTimestamp(`❌ 移除使用過的撥號名單項目失敗 - 專案: ${projectId}, 客戶: ${customerId}`);
+        return false;
+      }
+    } catch (error) {
+      errorWithTimestamp('❌ 移除使用過的撥號名單項目失敗:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 獲取下一個要撥打的電話號碼並標記為正在撥打（原子性操作）
    * @param projectId 專案 ID
    * @returns Promise<CallListManager | null> 下一個撥號項目，如果沒有則返回 null
    */
@@ -117,45 +158,43 @@ export class CallListManager {
     try {
       const callListKey = this.getCallListKey(projectId);
       
-      // 使用 Lua 腳本確保原子性操作：獲取第一個項目並立即刪除
+      // 使用 Lua 腳本確保原子性操作：獲取第一個未標記的項目並標記為正在撥打
       const luaScript = `
         local key = KEYS[1] 
         local fields = redis.call('HKEYS', key)
         if #fields == 0 then
           return nil
         end
-        local firstField = fields[1]
-        local value = redis.call('HGET', key, firstField)
-        if value then
-          redis.call('HDEL', key, firstField)
-          return {firstField, value}
+        
+        -- 遍歷所有 fields，找到第一個沒有 dialing 標記的項目
+        for i = 1, #fields do
+          local field = fields[i]
+          local value = redis.call('HGET', key, field)
+          if value then
+            local data = cjson.decode(value)
+            -- 檢查是否沒有 dialing 標記或標記為 false
+            if not data.dialing or data.dialing == false then
+              -- 標記為正在撥打
+              data.dialing = true
+              data.dialingAt = ARGV[1]  -- 撥打開始時間
+              local updatedValue = cjson.encode(data)
+              redis.call('HSET', key, field, updatedValue)
+              return {field, updatedValue}
+            end
+          end
         end
         return nil
       `;
-      /*
-        這段 Lua 腳本的作用是：
-          local key = KEYS[1]  -- 這是我們傳入的 Redis key，例如 "call_list:project123"
-          local fields = redis.call('HKEYS', key)  -- 獲取所有 hash fields
-          if #fields == 0 then  -- 如果沒有任何 fields（撥號名單是空的）
-            return nil  -- 返回 nil
-          end
-          local firstField = fields[1]  -- 取第一個 field（例如 "customer001"）
-          local value = redis.call('HGET', key, firstField)  -- 獲取該 field 的值
-          if value then  -- 如果值存在
-            redis.call('HDEL', key, firstField)  -- 刪除該 field
-            return {firstField, value}  -- 返回 field 名稱和值
-          end
-          return nil  -- 如果沒有值，返回 nil
-      */
 
-      // 執行 Lua 腳本
+      // 執行 Lua 腳本，傳入當前時間作為撥打開始時間
+      const dialingAt = new Date().toISOString();
       const result = await redisClient.eval(luaScript, {
         keys: [callListKey],
-        arguments: []
+        arguments: [dialingAt]
       }) as [string, string] | null;
 
       if (!result || !Array.isArray(result) || result.length !== 2) {
-        logWithTimestamp(`📞 專案 ${projectId} 的撥號名單已空`);
+        logWithTimestamp(`📞 專案 ${projectId} 的撥號名單已空或所有項目正在撥打中`);
         return null;
       }
 
@@ -177,42 +216,87 @@ export class CallListManager {
         return null;
       }
       
-      // 創建 CallListManager 實例
+      // 創建 CallListManager 實例，包含 dialing 狀態
       const callListItem = new CallListManager(
         itemData.projectId,
         itemData.customerId,
         itemData.memberName,
         itemData.phone,
         itemData.description,
-        itemData.description2
+        itemData.description2,
+        itemData.dialing || false,      // 撥打狀態
+        itemData.dialingAt || null      // 撥打開始時間
       );
       
       // 設置原始的時間戳
       callListItem.createdAt = itemData.createdAt;
       callListItem.updatedAt = itemData.updatedAt;
 
-      logWithTimestamp(`📞 原子性獲取撥號項目 - 專案: ${projectId}, 客戶: ${callListItem.memberName} (${callListItem.customerId}), 電話: ${callListItem.phone}`);
+      logWithTimestamp(`📞 標記撥號項目為正在撥打 - 專案: ${projectId}, 客戶: ${callListItem.memberName} (${callListItem.customerId}), 電話: ${callListItem.phone}, 撥打狀態: ${callListItem.dialing}`);
       
       return callListItem;
     } catch (error) {
-      errorWithTimestamp('❌ 原子性獲取下一個撥號項目失敗:', error);
+      errorWithTimestamp('❌ 獲取並標記下一個撥號項目失敗:', error);
       return null;
     }
   }
 
   /**
-   * 獲取專案的撥號名單數量
+   * 獲取專案的撥號名單數量（只計算未正在撥打的項目）
    * @param projectId 專案 ID
-   * @returns Promise<number> 撥號名單數量
+   * @returns Promise<number> 可用的撥號名單數量
    */
   static async getCallListCount(projectId: string): Promise<number> {
     try {
       const callListKey = this.getCallListKey(projectId);
-      const count = await redisClient.hLen(callListKey);
-      return count;
+      
+      // 使用 Lua 腳本計算未標記為正在撥打的項目數量
+      const luaScript = `
+        local key = KEYS[1]
+        local fields = redis.call('HKEYS', key)
+        local count = 0
+        
+        for i = 1, #fields do
+          local field = fields[i]
+          local value = redis.call('HGET', key, field)
+          if value then
+            local data = cjson.decode(value)
+            -- 只計算沒有正在撥打標記的項目
+            if not data.dialing or data.dialing == false then
+              count = count + 1
+            end
+          end
+        end
+        
+        return count
+      `;
+      
+      const count = await redisClient.eval(luaScript, {
+        keys: [callListKey],
+        arguments: []
+      }) as number;
+      
+      return count || 0;
     } catch (error) {
       errorWithTimestamp('❌ 獲取撥號名單數量失敗:', error);
       return 0;
+    }
+  }
+
+  /**
+   * 檢查客戶是否已存在於撥號名單中
+   * @param projectId 專案 ID
+   * @param customerId 客戶 ID
+   * @returns Promise<boolean> 是否存在
+   */
+  static async isCustomerExists(projectId: string, customerId: string): Promise<boolean> {
+    try {
+      const callListKey = this.getCallListKey(projectId);
+      const exists = await redisClient.hExists(callListKey, customerId);
+      return exists === 1; // Redis hExists 返回 1 表示存在，0 表示不存在
+    } catch (error) {
+      errorWithTimestamp('❌ 檢查客戶是否存在失敗:', error);
+      return false;
     }
   }
 }
