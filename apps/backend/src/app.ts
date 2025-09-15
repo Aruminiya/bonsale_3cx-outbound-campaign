@@ -79,6 +79,8 @@ ws.on('connection', (wsClient) => {
           const projectInstance = await Project.initOutboundProject(payload.project);
           // 將活躍的專案實例保存到Map中（這樣才能正確停止WebSocket連接）
           activeProjects.set(payload.project.projectId, projectInstance);
+          // 設定廣播 WebSocket 引用以供錯誤廣播使用
+          projectInstance.setBroadcastWebSocket(ws);
           // 連線 3CX WebSocket，並傳入 ws 實例以便廣播
           await projectInstance.create3cxWebSocketConnection(ws);
           break;

@@ -217,11 +217,79 @@ export default class Project {
   }
 
   /**
+   * 設定廣播 WebSocket 引用
+   * @param broadcastWs WebSocket 伺服器實例
+   */
+  setBroadcastWebSocket(broadcastWs: WebSocketServer): void {
+    this.broadcastWsRef = broadcastWs;
+  }
+
+  /**
    * 更新專案狀態
    * @param newAction 新的專案狀態 ('active' | 'stop')
    */
-  updateState(newState: 'active' | 'stop'): void {
+  async updateState(newState: 'active' | 'stop'): Promise<void> {
     this.state = newState;
+    
+    try {
+      // 同步更新到 Redis
+      await ProjectManager.updateProjectAction(this.projectId, newState);
+    } catch (error: unknown) {
+      errorWithTimestamp(`更新專案狀態到 Redis 失敗:`, error);
+    }
+  }
+
+  /**
+   * 設定專案錯誤
+   * @param errorMessage 錯誤訊息
+   */
+  async setError(errorMessage: string): Promise<void> {
+    this.error = errorMessage;
+    errorWithTimestamp(`專案 ${this.projectId} 發生錯誤: ${errorMessage}`);
+    
+    try {
+      // 同步更新到 Redis
+      await ProjectManager.updateProjectError(this.projectId, errorMessage);
+      
+      // 廣播錯誤給客戶端
+      if (this.broadcastWsRef) {
+        try {
+          await broadcastAllProjects(this.broadcastWsRef, this.projectId);
+          logWithTimestamp(`錯誤已廣播給客戶端 - 專案: ${this.projectId}`);
+        } catch (broadcastError) {
+          errorWithTimestamp(`廣播錯誤訊息失敗:`, broadcastError);
+        }
+      }
+    } catch (error: unknown) {
+      errorWithTimestamp(`更新專案錯誤到 Redis 失敗:`, error);
+    }
+  }
+
+  /**
+   * 清除專案錯誤
+   */
+  async clearError(): Promise<void> {
+    if (this.error) {
+      logWithTimestamp(`專案 ${this.projectId} 錯誤已解決，清除錯誤狀態`);
+      this.error = null;
+      
+      try {
+        // 同步更新到 Redis
+        await ProjectManager.updateProjectError(this.projectId, null);
+        
+        // 廣播錯誤清除給客戶端
+        if (this.broadcastWsRef) {
+          try {
+            await broadcastAllProjects(this.broadcastWsRef, this.projectId);
+            logWithTimestamp(`錯誤清除已廣播給客戶端 - 專案: ${this.projectId}`);
+          } catch (broadcastError) {
+            errorWithTimestamp(`廣播錯誤清除訊息失敗:`, broadcastError);
+          }
+        }
+      } catch (error: unknown) {
+        errorWithTimestamp(`清除專案錯誤到 Redis 失敗:`, error);
+      }
+    }
   }
 
   /**
@@ -256,6 +324,8 @@ export default class Project {
         resolve();
         
       } catch (error) {
+        const errorMsg = `3CX WebSocket 連接失敗: ${error instanceof Error ? error.message : String(error)}`;
+        await this.setError(errorMsg);
         reject(error);
       }
     });
@@ -324,6 +394,9 @@ export default class Project {
    */
   private async outboundCall(broadcastWs?: WebSocketServer): Promise<void> {
     try {
+      // 清除之前的錯誤（如果有的話）
+      await this.clearError();
+      
       // 步驟一: 檢查專案狀態
       if (this.state !== 'active') {
         logWithTimestamp('專案狀態不符合外撥條件:', this.state);
@@ -332,14 +405,18 @@ export default class Project {
       
       // 步驟二: 檢查並刷新 access_token
       if (!this.access_token) {
-        errorWithTimestamp('當前專案缺少 access_token');
+        const errorMsg = '當前專案缺少 access_token';
+        await this.setError(errorMsg);
+        errorWithTimestamp(errorMsg);
         return;
       }
 
       // 檢測 token 是否到期並自動刷新
       const tokenValid = await this.tokenManager.checkAndRefreshToken();
       if (!tokenValid) {
-        errorWithTimestamp('無法獲得有效的 access_token，停止外撥流程');
+        const errorMsg = '無法獲得有效的 access_token，停止外撥流程';
+        await this.setError(errorMsg);
+        errorWithTimestamp(errorMsg);
         return;
       }
 
@@ -367,8 +444,23 @@ export default class Project {
       // 步驟六: 執行外撥邏輯
       await this.executeOutboundCalls();
 
+      // 如果執行到這裡表示外撥流程成功完成，確保錯誤狀態被清除
+      await this.clearError();
+
     } catch (error) {
+      const errorMsg = `外撥流程發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
+      await this.setError(errorMsg);
       errorWithTimestamp('外撥流程發生錯誤:', error);
+      
+      // 廣播更新的專案資訊（包含錯誤）
+      if (broadcastWs) {
+        try {
+          await this.broadcastProjectInfo(broadcastWs);
+        } catch (broadcastError) {
+          errorWithTimestamp('廣播錯誤資訊失敗:', broadcastError);
+        }
+      }
+      
       throw error;
     }
   }
@@ -560,7 +652,6 @@ export default class Project {
           
           // 有撥號名單，進行撥打
           logWithTimestamp(`準備撥打 - 客戶: ${nextCallItem.memberName} (${nextCallItem.customerId}), 電話: ${nextCallItem.phone}, 分機: ${dn}`);
-          console.log('============makeOutboundCall============');
           await this.makeOutboundCall(dn, device_id, nextCallItem.phone, 2000);
         } else {
           // 沒有撥號名單，但要檢查該分機是否有當前撥打記錄需要處理
@@ -598,13 +689,14 @@ export default class Project {
           }
           
           // 即使沒有撥號名單，也要呼叫 makeOutboundCall 來處理前一通電話的結果
-          console.log('============makeOutboundCall (no target number)============');
           await this.makeOutboundCall(dn, device_id, null, 2000);
         }
       } else {
         warnWithTimestamp(`分機 ${dn} 已有通話中，無法撥打下一通電話`);
       }
     } catch (error) {
+      const errorMsg = `處理分機 ${caller.dn} 外撥時發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
+      await this.setError(errorMsg);
       errorWithTimestamp(`處理分機 ${caller.dn} 外撥時發生錯誤:`, error);
     }
   }
@@ -652,6 +744,8 @@ export default class Project {
       await makeCall(this.access_token, dn, deviceId, "outbound", targetNumber);
       logWithTimestamp(`成功發起外撥: ${dn} -> ${targetNumber}`);
     } catch (error) {
+      const errorMsg = `外撥失敗 ${dn} -> ${targetNumber}: ${error instanceof Error ? error.message : String(error)}`;
+      await this.setError(errorMsg);
       errorWithTimestamp(`外撥失敗 ${dn} -> ${targetNumber}:`, error);
       throw error;
     }
@@ -716,6 +810,8 @@ export default class Project {
       }
       
     } catch (error) {
+      const errorMsg = `記錄 Bonsale 通話結果失敗: ${error instanceof Error ? error.message : String(error)}`;
+      await this.setError(errorMsg);
       errorWithTimestamp('記錄 Bonsale 通話結果失敗:', error);
       // 不拋出錯誤，避免影響主要的外撥流程
     }
@@ -900,6 +996,8 @@ export default class Project {
       }
 
     } catch (error) {
+      const errorMsg = `處理 Bonsale 撥號名單失敗: ${error instanceof Error ? error.message : String(error)}`;
+      await this.setError(errorMsg);
       errorWithTimestamp('處理 Bonsale 撥號名單失敗:', error);
     }
   }
@@ -962,7 +1060,9 @@ export default class Project {
             this.handleWebSocketMessage(broadcastWs, data);
           }
         },
-        onError: (error: Error) => {
+        onError: async (error: Error) => {
+          const errorMsg = `3CX WebSocket 錯誤: ${error.message}`;
+          await this.setError(errorMsg);
           errorWithTimestamp('3CX WebSocket 錯誤:', error);
         },
         onClose: (code: number, reason: Buffer) => {
@@ -1225,7 +1325,7 @@ export default class Project {
         logWithTimestamp(`開始停止專案 ${projectId}`);
         
         // 更新專案狀態為 stop
-        runningProject.updateState('stop');
+        await runningProject.updateState('stop');
         
         // 同步更新 Redis 中的狀態
         await ProjectManager.updateProjectAction(projectId, 'stop');

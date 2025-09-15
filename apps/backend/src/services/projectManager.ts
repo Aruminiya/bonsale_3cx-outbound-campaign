@@ -193,6 +193,26 @@ export class ProjectManager {
     }
   }
 
+  // 更新專案錯誤狀態
+  static async updateProjectError(projectId: string, errorMessage: string | null): Promise<void> {
+    try {
+      const projectKey = `${this.PROJECT_PREFIX}${projectId}`;
+      await redisClient.hSet(projectKey, {
+        error: errorMessage || '',
+        updatedAt: new Date().toISOString()
+      });
+      
+      if (errorMessage) {
+        logWithTimestamp(`專案 ${projectId} 錯誤狀態已更新: ${errorMessage}`);
+      } else {
+        logWithTimestamp(`專案 ${projectId} 錯誤狀態已清除`);
+      }
+    } catch (error) {
+      errorWithTimestamp('更新專案錯誤狀態失敗:', error);
+      throw error;
+    }
+  }
+
   // 檢查專案是否存在
   static async projectExists(projectId: string): Promise<boolean> {
     try {
