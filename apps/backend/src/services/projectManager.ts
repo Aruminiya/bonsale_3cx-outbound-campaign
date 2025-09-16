@@ -119,6 +119,17 @@ export class ProjectManager {
     }
   }
 
+  // 取得活躍專案數量
+  static async getActiveProjectsCount(): Promise<number> {
+    try {
+      const count = await redisClient.sCard(this.ACTIVE_PROJECTS_SET);
+      return count;
+    } catch (error) {
+      errorWithTimestamp('取得活躍專案數量失敗:', error);
+      return 0;
+    }
+  }
+
   // 更新專案狀態
   static async updateProjectAction(projectId: string, state: 'active' | 'stop'): Promise<void> {
     try {

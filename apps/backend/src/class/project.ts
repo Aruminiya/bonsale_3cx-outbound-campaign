@@ -197,8 +197,7 @@ export default class Project {
       // 儲存專案到 Redis
       await ProjectManager.saveProject(project);
       
-      // 啟動分機狀態管理器
-      extensionStatusManager.startPolling(access_token);
+      // 注意：分機狀態管理器現在在伺服器啟動時統一管理，不需要在每個專案中啟動
       
       logWithTimestamp(`專案 ${projectId} 初始化完成並儲存到 Redis`);
       return project;
@@ -216,8 +215,7 @@ export default class Project {
   updateAccessToken(newAccessToken: string): void {
     this.access_token = newAccessToken;
     this.tokenManager.updateAccessToken(newAccessToken);
-    // 同步更新分機狀態管理器的 token
-    extensionStatusManager.updateAccessToken(newAccessToken);
+    // 注意：分機狀態管理器現在使用管理員 token 自動管理，不需要同步更新
   }
 
   /**
@@ -430,8 +428,7 @@ export default class Project {
         this.access_token = currentToken;
         // Token 已更新，需要重新建立 WebSocket 連接
         await this.handleTokenUpdateWebSocketReconnect(broadcastWs);
-        // 同時更新分機狀態管理器的 token
-        extensionStatusManager.updateAccessToken(currentToken);
+        // 注意：分機狀態管理器現在使用管理員 token 自動管理，不需要同步更新
       }
 
       // 步驟三: 獲取並更新 caller 資訊
@@ -1340,12 +1337,19 @@ export default class Project {
       // 斷開 WebSocket 連接
       await this.disconnect3cxWebSocket();
       
-      // 停止分機狀態管理器（只有在沒有其他活躍專案時才停止）
-      // 註: 這裡暫時不停止 extensionStatusManager，因為它是單例，可能被其他專案使用
-      // 如果需要在所有專案停止時停止管理器，應該在 ProjectManager 中統一管理
-      
       // 從 Redis 移除專案
       await ProjectManager.removeProject(this.projectId);
+      
+      // 檢查是否還有其他活躍專案，如果沒有則停止分機狀態管理器
+      const activeProjectsCount = await ProjectManager.getActiveProjectsCount();
+      logWithTimestamp(`📊 檢查活躍專案數量: ${activeProjectsCount}`);
+      
+      if (activeProjectsCount === 0) {
+        logWithTimestamp(`🛑 沒有其他活躍專案，停止分機狀態管理器`);
+        extensionStatusManager.stopPolling();
+      } else {
+        logWithTimestamp(`ℹ️ 還有 ${activeProjectsCount} 個活躍專案，分機狀態管理器繼續運行`);
+      }
       
       // 最後廣播一次更新
       await this.broadcastProjectInfo(broadcastWs);

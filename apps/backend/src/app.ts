@@ -12,6 +12,7 @@ import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from './util/
 import Project from './class/project';
 import { initRedis, closeRedis } from './services/redis';
 import { broadcastAllProjects, broadcastError } from './components/broadcast';
+import { extensionStatusManager } from './components/extensionStatusManager';
 
 // Load environment variables
 dotenv.config();
@@ -112,11 +113,16 @@ httpServer.listen(PORT, async () => {
     // 初始化 Redis 連接
     await initRedis();
     
+    // 初始化分機狀態管理器 (使用管理員權限)
+    logWithTimestamp('🔧 正在初始化分機狀態管理器...');
+    await extensionStatusManager.startPolling();
+    
     logWithTimestamp(`🚀 Server is running on port ${PORT}`);
     logWithTimestamp(`📍 Check: http://localhost:${PORT}`);
     logWithTimestamp(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
     logWithTimestamp(`🔌 WebSocket server is running at ws://localhost:${PORT}`);
     logWithTimestamp(`🔴 Redis server is connected`);
+    logWithTimestamp(`📊 Extension Status Manager is initialized`);
   } catch (error) {
     errorWithTimestamp('啟動服務器失敗:', error);
     process.exit(1);
@@ -127,10 +133,13 @@ httpServer.listen(PORT, async () => {
 process.on('SIGINT', async () => {
   logWithTimestamp('收到 SIGINT 信號，正在關閉服務器...');
   try {
+    // 停止分機狀態管理器
+    extensionStatusManager.stopPolling();
+    // 關閉 Redis 連接
     await closeRedis();
     process.exit(0);
   } catch (error) {
-    errorWithTimestamp('關閉 Redis 連接失敗:', error);
+    errorWithTimestamp('關閉服務器失敗:', error);
     process.exit(1);
   }
 });
@@ -138,10 +147,13 @@ process.on('SIGINT', async () => {
 process.on('SIGTERM', async () => {
   logWithTimestamp('收到 SIGTERM 信號，正在關閉服務器...');
   try {
+    // 停止分機狀態管理器
+    extensionStatusManager.stopPolling();
+    // 關閉 Redis 連接
     await closeRedis();
     process.exit(0);
   } catch (error) {
-    errorWithTimestamp('關閉 Redis 連接失敗:', error);
+    errorWithTimestamp('關閉服務器失敗:', error);
     process.exit(1);
   }
 });
