@@ -9,8 +9,8 @@ import { WebSocketManager } from './webSocketManager';
 import { TokenManager } from './tokenManager';
 import { CallListManager } from './callListManager';
 import { getOutbound, updateCallStatus, updateDialUpdate, updateVisitRecord } from '../services/api/bonsale';
+import { getUsers } from '../services/api/xApi';
 import { Outbound } from '../types/bonsale/getOutbound';
-import { extensionStatusManager } from '../components/extensionStatusManager';
 
 dotenv.config();
 
@@ -564,9 +564,36 @@ export default class Project {
       return;
     }
 
-    // 遍歷所有分機進行外撥
-    const callPromises = this.caller.map(caller => this.processCallerOutbound(caller));
-    await Promise.allSettled(callPromises);
+    // 遍歷所有分機進行外撥 (使用 for 循環確保順序執行)
+    for (const caller of this.caller) {
+      try {
+        // 檢查代理人用戶是否忙碌
+        if (!this.access_token) {
+          logWithTimestamp(`無效的 access_token，跳過分機 ${caller.dn} 的外撥`);
+          continue;
+        }
+        
+        const agentUser = await getUsers(this.access_token, caller.dn);
+        if (!agentUser.success) {
+          logWithTimestamp(`無法獲取分機 ${caller.dn} 的代理人用戶資訊，跳過外撥`);
+          continue;
+        }
+        console.log('agentUser', agentUser.data);
+        const { CurrentProfileName } = agentUser.data.value[0];
+        const isAgentUserBusy = CurrentProfileName !== "Available";
+        if (isAgentUserBusy) {
+          logWithTimestamp(`分機 ${caller.dn} 的代理人用戶忙碌，跳過外撥`);
+          continue;
+        }
+        
+        // 代理人可用，執行外撥邏輯
+        await this.processCallerOutbound(caller);
+      } catch (error) {
+        errorWithTimestamp(`處理分機 ${caller.dn} 外撥時發生錯誤:`, error);
+        // 繼續處理下一個分機，不中斷整個流程
+        continue;
+      }
+    }
   }
 
   /**
@@ -588,12 +615,6 @@ export default class Project {
       // 檢查分機是否空閒
       if (!participants || participants.length === 0) {
         logWithTimestamp(`分機 ${dn} 空閒，可以撥打電話`);
-
-        // 檢查分機人員是否設定為忙碌狀態
-        if (extensionStatusManager.isExtensionBusy(dn)) {
-          warnWithTimestamp(`分機 ${dn} 人員設定為忙碌狀態，暫停撥打`);
-          return;
-        }
         
         // 從 Redis 獲取下一個要撥打的電話號碼
         const nextCallItem = await CallListManager.getNextCallItem(this.projectId);
@@ -1174,10 +1195,7 @@ export default class Project {
       // 檢查分機是否空閒（沒有通話中）
       const isIdle = !caller.participants || caller.participants.length === 0;
       
-      // 檢查分機是否非忙碌狀態
-      const isNotBusy = !extensionStatusManager.isExtensionBusy(caller.dn);
-      
-      return isIdle && isNotBusy;
+      return isIdle;
     });
 
     if (hasIdleExtension) {
@@ -1339,17 +1357,6 @@ export default class Project {
       
       // 從 Redis 移除專案
       await ProjectManager.removeProject(this.projectId);
-      
-      // 檢查是否還有其他活躍專案，如果沒有則停止分機狀態管理器
-      const activeProjectsCount = await ProjectManager.getActiveProjectsCount();
-      logWithTimestamp(`📊 檢查活躍專案數量: ${activeProjectsCount}`);
-      
-      if (activeProjectsCount === 0) {
-        logWithTimestamp(`🛑 沒有其他活躍專案，停止分機狀態管理器`);
-        extensionStatusManager.stopPolling();
-      } else {
-        logWithTimestamp(`ℹ️ 還有 ${activeProjectsCount} 個活躍專案，分機狀態管理器繼續運行`);
-      }
       
       // 最後廣播一次更新
       await this.broadcastProjectInfo(broadcastWs);
