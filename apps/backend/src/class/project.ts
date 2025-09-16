@@ -1245,6 +1245,78 @@ export default class Project {
   }
 
   /**
+   * 處理所有未完成的通話記錄
+   * 在專案完全停止前，確保所有通話記錄都被正確處理
+   * @private
+   */
+  private async processPendingCallRecords(): Promise<void> {
+    try {
+      logWithTimestamp(`🔄 專案 ${this.projectId} 開始處理未完成的通話記錄`);
+
+      // 檢查是否有未處理的 latestCallRecord
+      if (this.latestCallRecord && this.latestCallRecord.length > 0) {
+        logWithTimestamp(`📞 發現 ${this.latestCallRecord.length} 筆未處理的通話記錄`);
+        
+        // 將所有 latestCallRecord 移動到 previousCallRecord 以便處理
+        for (const callRecord of this.latestCallRecord) {
+          if (callRecord) {
+            // 初始化 previousCallRecord（如果需要）
+            if (!this.previousCallRecord) {
+              this.previousCallRecord = [];
+            }
+            
+            // 檢查是否已存在該分機的記錄
+            const existingIndex = this.previousCallRecord.findIndex(call => call?.dn === callRecord.dn);
+            if (existingIndex >= 0) {
+              this.previousCallRecord[existingIndex] = { ...callRecord };
+            } else {
+              this.previousCallRecord.push({ ...callRecord });
+            }
+            
+            logWithTimestamp(`📋 移動通話記錄到待處理清單 - 分機: ${callRecord.dn}, 客戶: ${callRecord.memberName} (${callRecord.customerId})`);
+          }
+        }
+        
+        // 清空 latestCallRecord
+        this.latestCallRecord = [];
+        
+        // 更新到 Redis
+        await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
+      }
+
+      // 處理所有 previousCallRecord
+      if (this.previousCallRecord && this.previousCallRecord.length > 0) {
+        logWithTimestamp(`🔄 開始處理 ${this.previousCallRecord.length} 筆待處理的通話記錄`);
+        
+        const processPromises = this.previousCallRecord
+          .filter(record => record !== null)
+          .map(async (record) => {
+            try {
+              await this.recordBonsaleCallResult(record);
+              logWithTimestamp(`✅ 完成處理通話記錄 - 分機: ${record!.dn}, 客戶: ${record!.memberName}`);
+            } catch (error) {
+              errorWithTimestamp(`❌ 處理通話記錄失敗 - 分機: ${record!.dn}, 客戶: ${record!.memberName}:`, error);
+            }
+          });
+        
+        // 等待所有記錄處理完成
+        await Promise.allSettled(processPromises);
+        
+        // 清空 previousCallRecord
+        this.previousCallRecord = [];
+        
+        logWithTimestamp(`✅ 所有未完成的通話記錄處理完成`);
+      } else {
+        logWithTimestamp(`ℹ️ 沒有待處理的通話記錄`);
+      }
+      
+    } catch (error) {
+      errorWithTimestamp(`處理未完成通話記錄時發生錯誤:`, error);
+      // 不拋出錯誤，避免影響停止流程
+    }
+  }
+
+  /**
    * 執行完全停止邏輯
    * @param broadcastWs 廣播 WebSocket 伺服器實例
    */
@@ -1252,6 +1324,9 @@ export default class Project {
     try {
       // 停止空閒檢查定時器
       this.stopIdleCheck();
+      
+      // 處理所有未完成的通話記錄
+      await this.processPendingCallRecords();
       
       // 斷開 WebSocket 連接
       await this.disconnect3cxWebSocket();
