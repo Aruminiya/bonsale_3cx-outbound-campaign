@@ -77,6 +77,10 @@ export default class Project {
   private tokenManager: TokenManager;
   private throttledMessageHandler: DebouncedFunc<(broadcastWs: WebSocketServer, data: Buffer) => Promise<void>> | null = null;
   private idleCheckTimer: NodeJS.Timeout | null = null; // 空閒檢查定時器
+  private idleCheckInterval: number = 30000; // 當前檢查間隔（毫秒）
+  private readonly minIdleCheckInterval: number = 30000; // 最小檢查間隔 30 秒
+  private readonly maxIdleCheckInterval: number = 300000; // 最大檢查間隔 5 分鐘
+  private readonly idleCheckBackoffFactor: number = 1.5; // 指數退避倍數
   private broadcastWsRef: WebSocketServer | undefined = undefined; // 保存 WebSocket 引用
 
   /**
@@ -1084,7 +1088,7 @@ export default class Project {
   }
 
   /**
-   * 開始空閒檢查定時器
+   * 開始空閒檢查定時器（使用指數退避機制）
    * @param broadcastWs 廣播 WebSocket 伺服器實例
    * @private
    */
@@ -1095,16 +1099,13 @@ export default class Project {
     // 保存 WebSocket 引用
     this.broadcastWsRef = broadcastWs;
 
-    // 設定 30 秒檢查一次空閒狀態
-    this.idleCheckTimer = setInterval(async () => {
-      try {
-        await this.checkIdleAndTriggerOutbound();
-      } catch (error) {
-        errorWithTimestamp(`空閒檢查時發生錯誤 - 專案 ${this.projectId}:`, error);
-      }
-    }, 30000); // 30 秒檢查一次
+    // 重置檢查間隔為最小值
+    this.idleCheckInterval = this.minIdleCheckInterval;
 
-    logWithTimestamp(`🕰️ 專案 ${this.projectId} 空閒檢查定時器已啟動（30秒間隔）`);
+    // 啟動第一次檢查
+    this.scheduleNextIdleCheck();
+
+    logWithTimestamp(`🕰️ 專案 ${this.projectId} 空閒檢查定時器已啟動（指數退避機制，初始間隔：${this.idleCheckInterval / 1000}秒）`);
   }
 
   /**
@@ -1113,25 +1114,62 @@ export default class Project {
    */
   private stopIdleCheck(): void {
     if (this.idleCheckTimer) {
-      clearInterval(this.idleCheckTimer);
+      clearTimeout(this.idleCheckTimer);
       this.idleCheckTimer = null;
       logWithTimestamp(`⏹️ 專案 ${this.projectId} 空閒檢查定時器已停止`);
     }
   }
 
   /**
-   * 檢查空閒狀態並觸發外撥
+   * 安排下一次空閒檢查（使用指數退避）
    * @private
    */
-  private async checkIdleAndTriggerOutbound(): Promise<void> {
+  private scheduleNextIdleCheck(): void {
+    this.idleCheckTimer = setTimeout(async () => {
+      try {
+        const hasIdleExtension = await this.checkIdleAndTriggerOutbound();
+        
+        if (hasIdleExtension) {
+          // 如果有空閒分機並觸發了外撥，重置間隔為最小值
+          this.idleCheckInterval = this.minIdleCheckInterval;
+          logWithTimestamp(`🔄 專案 ${this.projectId} 檢測到活動，重置檢查間隔為 ${this.idleCheckInterval / 1000} 秒`);
+        } else {
+          // 如果沒有空閒分機，增加檢查間隔（指數退避）
+          this.idleCheckInterval = Math.min(
+            this.idleCheckInterval * this.idleCheckBackoffFactor,
+            this.maxIdleCheckInterval
+          );
+          logWithTimestamp(`⏰ 專案 ${this.projectId} 無活動，增加檢查間隔為 ${this.idleCheckInterval / 1000} 秒`);
+        }
+        
+        // 安排下一次檢查
+        if (this.state === 'active') {
+          this.scheduleNextIdleCheck();
+        }
+      } catch (error) {
+        errorWithTimestamp(`空閒檢查時發生錯誤 - 專案 ${this.projectId}:`, error);
+        // 發生錯誤時也要安排下一次檢查
+        if (this.state === 'active') {
+          this.scheduleNextIdleCheck();
+        }
+      }
+    }, this.idleCheckInterval);
+  }
+
+  /**
+   * 檢查空閒狀態並觸發外撥
+   * @returns Promise<boolean> - true 如果找到空閒分機並觸發外撥，false 如果沒有
+   * @private
+   */
+  private async checkIdleAndTriggerOutbound(): Promise<boolean> {
     // 檢查專案狀態
     if (this.state !== 'active') {
-      return;
+      return false;
     }
 
     // 檢查是否有空閒分機
     if (!this.caller || this.caller.length === 0) {
-      return;
+      return false;
     }
 
     // 檢查是否有空閒且非忙碌的分機
@@ -1155,7 +1193,11 @@ export default class Project {
         logWithTimestamp(`🔄 延遲後觸發外撥邏輯 - 專案: ${this.projectId}`);
         await this.outboundCall(this.broadcastWsRef);
       }, randomDelay);
+      
+      return true;
     }
+    
+    return false;
   }
 
   /**
