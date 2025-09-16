@@ -299,4 +299,39 @@ export class CallListManager {
       return false;
     }
   }
+
+  /**
+   * 清空專案的所有撥號名單
+   * @param projectId 專案 ID
+   * @returns Promise<boolean> 是否清空成功
+   */
+  static async clearProjectCallList(projectId: string): Promise<boolean> {
+    try {
+      const callListKey = this.getCallListKey(projectId);
+      
+      // 檢查 key 是否存在
+      const exists = await redisClient.exists(callListKey);
+      if (!exists) {
+        logWithTimestamp(`📭 專案 ${projectId} 的撥號名單已為空`);
+        return true;
+      }
+      
+      // 獲取清空前的數量用於日誌
+      const countBefore = await redisClient.hLen(callListKey);
+      
+      // 刪除整個 hash key
+      const result = await redisClient.del(callListKey);
+      
+      if (result === 1) {
+        logWithTimestamp(`🗑️ 已清空專案 ${projectId} 的撥號名單 (清空 ${countBefore} 筆記錄)`);
+        return true;
+      } else {
+        errorWithTimestamp(`❌ 清空專案 ${projectId} 撥號名單失敗`);
+        return false;
+      }
+    } catch (error) {
+      errorWithTimestamp(`❌ 清空專案 ${projectId} 撥號名單時發生錯誤:`, error);
+      return false;
+    }
+  }
 }

@@ -1328,6 +1328,15 @@ export default class Project {
       // 處理所有未完成的通話記錄
       await this.processPendingCallRecords();
       
+      // 清空該專案在 Redis 中的暫存撥號名單
+      logWithTimestamp(`🗑️ 清空專案 ${this.projectId} 的 Redis 暫存撥號名單`);
+      const clearResult = await CallListManager.clearProjectCallList(this.projectId);
+      if (clearResult) {
+        logWithTimestamp(`✅ 成功清空專案 ${this.projectId} 的撥號名單`);
+      } else {
+        warnWithTimestamp(`⚠️ 清空專案 ${this.projectId} 撥號名單失敗`);
+      }
+      
       // 斷開 WebSocket 連接
       await this.disconnect3cxWebSocket();
       
