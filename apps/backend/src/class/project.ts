@@ -579,12 +579,13 @@ export default class Project {
           logWithTimestamp(`無法獲取分機 ${caller.dn} 的代理人用戶資訊，跳過外撥`);
           continue;
         }
-        console.log('agentUser', agentUser.data);
-        const { CurrentProfileName } = agentUser.data.value[0];
-        const isAgentUserBusy = CurrentProfileName !== "Available";
-        if (isAgentUserBusy) {
-          logWithTimestamp(`分機 ${caller.dn} 的代理人用戶忙碌，跳過外撥`);
-          continue;
+        const CurrentProfileName = agentUser.data.value[0]?.CurrentProfileName;
+        if (CurrentProfileName) {
+          const isAgentUserBusy = CurrentProfileName !== "Available";
+          if (isAgentUserBusy) {
+            logWithTimestamp(`分機 ${caller.dn} 的代理人用戶忙碌，跳過外撥`);
+            continue;
+          }
         }
         
         // 代理人可用，執行外撥邏輯
