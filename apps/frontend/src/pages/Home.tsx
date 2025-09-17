@@ -141,6 +141,7 @@ export default function Home() {
           client_id: project.appId,
           client_secret: project.appSecret,
           projectId: project.projectId,
+          recurrence: project.recurrence,
         }
       }
     }

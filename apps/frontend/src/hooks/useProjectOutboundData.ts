@@ -27,6 +27,7 @@ const useProjectOutboundData = () => {
         startDate: new Date(item.projectInfo.startDate),
         endDate: new Date(item.projectInfo.endDate),
         extension: item.callFlow.phone,
+        recurrence: item.recurrence,
         isEnable: item.projectInfo.isEnable,
       }));
       

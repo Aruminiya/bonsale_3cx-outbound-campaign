@@ -8,6 +8,7 @@ declare global {
     startDate: Date;
     endDate: Date;
     extension: string
+    recurrence: string | null
     isEnable: boolean
   }
   interface ProjectCustomersDesc {
