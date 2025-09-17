@@ -54,6 +54,7 @@ export interface ProjectData {
   agentQuantity: number;
   caller: unknown;
   access_token: string | null;
+  recurrence: string | null;
   createdAt: string;
   updatedAt: string;
 }
