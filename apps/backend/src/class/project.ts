@@ -61,6 +61,17 @@ type Caller = {
   participants: Array<Participants>;
 }
 
+// TODO: 指定時間才能撥打  需要再跟 perter 和 victor 討論能不能加開欄位 讓我有時間可選限制
+/*
+  因為目前的限制時間 是 
+
+  指定檔期：從 A 日期時間開始 到 B 日期時間結束 固定的某些日期 才能打電話
+
+  但這還不夠
+
+  還需要 限制 滿足在檔期的內時間 不可撥打的時間區段
+*/
+
 export default class Project {
   grant_type: string;
   client_id: string;
