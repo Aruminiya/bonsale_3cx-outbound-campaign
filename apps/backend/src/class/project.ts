@@ -1101,8 +1101,34 @@ export default class Project {
         maxReconnectAttempts: 5
       },
       handlers: {
-        onOpen: () => this.handleWebSocketInitialization(broadcastWs, '3CX WebSocket 連接成功'),
+        onOpen: () => {
+          logWithTimestamp({ isForce: true }, '🔗 WebSocket 連接成功 - 完整專案資訊:', {
+            projectId: this.projectId,
+            callFlowId: this.callFlowId,
+            state: this.state,
+            client_id: this.client_id,
+            agentQuantity: this.agentQuantity,
+            access_token: this.access_token ? '***已設置***' : '未設置',
+            recurrence: this.recurrence,
+            error: this.error,
+            wsConnected: this.wsManager?.isConnected() || false,
+            timestamp: new Date().toISOString()
+          });
+          this.handleWebSocketInitialization(broadcastWs, '3CX WebSocket 連接成功')
+        },
         onMessage: (data: Buffer) => {
+          logWithTimestamp({ isForce: true }, '📨 3CX WebSocket 收到訊息:', {
+            projectId: this.projectId,
+            callFlowId: this.callFlowId,
+            state: this.state,
+            client_id: this.client_id,
+            agentQuantity: this.agentQuantity,
+            access_token: this.access_token ? '***已設置***' : '未設置',
+            recurrence: this.recurrence,
+            error: this.error,
+            wsConnected: this.wsManager?.isConnected() || false,
+            timestamp: new Date().toISOString()
+          });
           if (broadcastWs) {
             this.handleWebSocketMessage(broadcastWs, data);
           }

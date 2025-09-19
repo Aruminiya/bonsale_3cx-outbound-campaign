@@ -112,11 +112,11 @@ httpServer.listen(PORT, async () => {
     // 初始化 Redis 連接
     await initRedis();
     
-    logWithTimestamp(`🚀 Server is running on port ${PORT}`);
-    logWithTimestamp(`📍 Check: http://localhost:${PORT}`);
-    logWithTimestamp(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-    logWithTimestamp(`🔌 WebSocket server is running at ws://localhost:${PORT}`);
-    logWithTimestamp(`🔴 Redis server is connected`);
+    logWithTimestamp({ isForce: true }, `🚀 Server is running on port ${PORT}`);
+    logWithTimestamp({ isForce: true }, `📍 Check: http://localhost:${PORT}`);
+    logWithTimestamp({ isForce: true }, `🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    logWithTimestamp({ isForce: true }, `🔌 WebSocket server is running at ws://localhost:${PORT}`);
+    logWithTimestamp({ isForce: true }, `🔴 Redis server is connected`);
   } catch (error) {
     errorWithTimestamp('啟動服務器失敗:', error);
     process.exit(1);
