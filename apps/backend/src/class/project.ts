@@ -8,7 +8,7 @@ import { broadcastAllProjects } from '../components/broadcast';
 import { WebSocketManager } from './webSocketManager';
 import { TokenManager } from './tokenManager';
 import { CallListManager } from './callListManager';
-import { getOutbound, updateCallStatus, updateDialUpdate, updateVisitRecord } from '../services/api/bonsale';
+import { getOutbound, updateCallStatus, updateDialUpdate, updateVisitRecord, updateBonsaleProjectAutoDialExecute } from '../services/api/bonsale';
 import { getUsers } from '../services/api/xApi';
 import { Outbound } from '../types/bonsale/getOutbound';
 import { post9000Dummy, post9000 } from '../services/api/insertOverdueMessageForAi';
@@ -808,6 +808,12 @@ export default class Project {
           
           // 記錄完成後，移除使用過的撥號名單項目
           await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
+
+          // 更新自動撥號執行狀態
+          await updateBonsaleProjectAutoDialExecute(
+            this.projectId,
+            this.callFlowId,
+          );
           
           // TODO 這邊要再確認 description 跟 description2 要怎麼帶進去
           if ((!previousCallRecord.description || previousCallRecord.description.trim() === '')
@@ -815,6 +821,7 @@ export default class Project {
             warnWithTimestamp(`分機 ${previousCallRecord.dn} 的前一筆撥打記錄沒有 description 或 description2 描述資訊`);
             return;
           };
+
           await post9000Dummy(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
           await post9000(previousCallRecord.description2, previousCallRecord.description, previousCallRecord.phone);
           break;
@@ -838,6 +845,12 @@ export default class Project {
               '撥打成功'
             );
           }, 100);
+
+          // 更新自動撥號執行狀態
+          await updateBonsaleProjectAutoDialExecute(
+            this.projectId,
+            this.callFlowId,
+          );
           break;
         default:
           warnWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為未知，無法記錄前一通電話結果`);

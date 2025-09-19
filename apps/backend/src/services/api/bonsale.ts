@@ -80,6 +80,7 @@ async function updateBonsaleProjectAutoDialExecute(
 ): Promise<PutBonsaleProjectAutoDialExecuteApiResult> {
   try {
     const response = await axiosBonsaleInstance.put(`${host}/project/${projectId}/auto-dial/${callFlowId}/execute`, {});
+    console.log('==============成功 更新自動撥號執行狀態:', response.data);
     return { success: true, data: response.data }; // 返回成功
   } catch (error: unknown) {
     const axiosError = error as AxiosError;
