@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from '../util/timestamp';
-import { get3cxToken } from '../services/api/callControl';
+import { get3cxToken, getCaller } from '../services/api/callControl';
 import { ProjectManager } from '../services/projectManager';
 
 /**
@@ -114,9 +114,16 @@ export class TokenManager {
         return false;
       }
 
-      // 直接檢查 token 是否即將過期
+      // 使用 getCaller 驗證 token 是否可用
+      const callerResult = await getCaller(this.accessToken);
+      if (!callerResult.success) {
+        warnWithTimestamp('Token 無法使用（getCaller 驗證失敗），需要重新獲取:', callerResult.error);
+        return await this.forceRefreshToken();
+      }
+
+      // 檢查 token 是否即將過期
       if (!this.isTokenExpired(this.accessToken, bufferMinutes)) {
-        // Token 仍然有效，無需刷新
+        // Token 仍然有效且可用，無需刷新
         return true;
       }
       
@@ -128,10 +135,14 @@ export class TokenManager {
       if (!newTokenResult.success) {
         errorWithTimestamp('刷新 access token 失敗:', newTokenResult.error);
         
-        // 如果刷新失敗，檢查當前 token 是否還沒完全過期
+        // 如果刷新失敗，檢查當前 token 是否還沒完全過期且可用
         if (!this.isTokenExpired(this.accessToken, 0)) {
-          warnWithTimestamp('Token 刷新失敗，但當前 token 仍然有效，繼續使用');
-          return true;
+          // 再次驗證 token 是否可用
+          const fallbackCallerResult = await getCaller(this.accessToken, 'extension');
+          if (fallbackCallerResult.success) {
+            warnWithTimestamp('Token 刷新失敗，但當前 token 仍然有效，繼續使用');
+            return true;
+          }
         }
         return false;
       }
