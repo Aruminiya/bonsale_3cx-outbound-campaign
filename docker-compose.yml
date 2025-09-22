@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    container_name: bonsale-backend
+    ports:
+      - "4020:4020"
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    networks:
+      - bonsale-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    container_name: bonsale-frontend
+    ports:
+      - "4030:80"
+    depends_on:
+      - backend
+    networks:
+      - bonsale-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: bonsale-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - bonsale-network
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+
+networks:
+  bonsale-network:
+    driver: bridge
