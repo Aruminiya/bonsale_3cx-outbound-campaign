@@ -1396,7 +1396,7 @@ export default class Project {
       
       // 清空該專案在 Redis 中的暫存撥號名單
       logWithTimestamp(`🗑️ 清空專案 ${this.projectId} 的 Redis 暫存撥號名單`);
-      const clearResult = await CallListManager.clearProjectCallList(this.projectId);
+      const clearResult = await CallListManager.removeProjectCallList(this.projectId);
       if (clearResult) {
         logWithTimestamp(`✅ 成功清空專案 ${this.projectId} 的撥號名單`);
       } else {
