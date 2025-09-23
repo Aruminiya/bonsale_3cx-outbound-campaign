@@ -2,9 +2,7 @@ version: '3.8'
 
 services:
   backend:
-    build:
-      context: .
-      dockerfile: apps/backend/Dockerfile
+    image: gcr.io/drvet-server-sysstore-bonvies/bonsale_3cx-outbound-campaign_backend:test
     container_name: bonsale_3cx-outbound-campaign_backend
     ports:
       - "4020:4020"
@@ -17,9 +15,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    build:
-      context: .
-      dockerfile: apps/frontend/Dockerfile
+    image: gcr.io/drvet-server-sysstore-bonvies/bonsale_3cx-outbound-campaign_frontend:test
     container_name: bonsale_3cx-outbound-campaign_frontend
     ports:
       - "4030:80"
@@ -40,7 +36,7 @@ services:
       - bonsale-network
     restart: unless-stopped
 
-    # Redis GUI 管理工具
+  # Redis GUI 管理工具
   redis-commander:
     image: rediscommander/redis-commander:latest
     container_name: bonsale_redis_commander
