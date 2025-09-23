@@ -43,11 +43,13 @@ export default function Home() {
     }
   };
 
+  // 取得本機 IP domain
+  const { hostname } = window.location;
   // 連線 WebSocket
   const WS_PROTOCOL = import.meta.env.VITE_WS_PROTOCOL;
   const DOMAIN = import.meta.env.VITE_DOMAIN;
   const PORT = import.meta.env.VITE_API_PORT;
-  const WS_URL = `${WS_PROTOCOL}://${DOMAIN}:${PORT}`;
+  const WS_URL = DOMAIN === 'localhost' ? `${WS_PROTOCOL}://${hostname}:${PORT}` : `${WS_PROTOCOL}://${DOMAIN}:${PORT}`;
 
   // 只在元件掛載時執行一次
   useEffect(() => {
