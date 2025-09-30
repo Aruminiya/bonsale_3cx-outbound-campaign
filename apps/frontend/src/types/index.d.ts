@@ -376,6 +376,7 @@ declare global {
       }>;
     }>;
     latestCallRecord: CallRecord[] | null;
+    error: string | null;
     access_token: string;
     createdAt: string;
     updatedAt: string;

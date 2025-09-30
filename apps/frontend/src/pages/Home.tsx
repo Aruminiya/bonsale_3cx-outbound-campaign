@@ -656,6 +656,26 @@ export default function Home() {
                                   />
                                 )}
                               </Stack>
+                              {/* 專案錯誤顯示 */}
+                              {projectWsData.error && (
+                                <Box 
+                                  sx={{ 
+                                    marginTop: '12px'
+                                  }}
+                                >
+                                  <Alert 
+                                    severity="error" 
+                                    sx={{ 
+                                      fontSize: '0.8rem',
+                                      '& .MuiAlert-message': {
+                                        wordBreak: 'break-word'
+                                      }
+                                    }}
+                                  >
+                                    <strong>專案錯誤：</strong>{projectWsData.error}
+                                  </Alert>
+                                </Box>
+                              )}
                             </Box>
                           </Stack>
                         );
