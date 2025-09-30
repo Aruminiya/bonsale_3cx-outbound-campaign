@@ -372,6 +372,9 @@ export default class Project {
       // 根據不同的事件類型處理邏輯
       switch (messageObject.event.event_type) {
         case 0:
+          logWithTimestamp(`狀態 ${messageObject.event.event_type}:`, messageObject.event);
+          await this.outboundCall(broadcastWs, false);
+          break;
         case 1:
           logWithTimestamp(`狀態 ${messageObject.event.event_type}:`, messageObject.event);
 
@@ -400,7 +403,7 @@ export default class Project {
    * @param updateCaller 是否更新 caller 資訊，預設為 true
    * @private
    */
-  private async outboundCall(broadcastWs?: WebSocketServer): Promise<void> {
+  private async outboundCall(broadcastWs?: WebSocketServer, isExecuteOutboundCalls: boolean = true): Promise<void> {
     try {
       // 清除之前的錯誤（如果有的話）
       await this.clearError();
@@ -449,10 +452,12 @@ export default class Project {
       }
 
       // 步驟六: 執行外撥邏輯
-      await this.executeOutboundCalls();
+      if (isExecuteOutboundCalls) {
+        await this.executeOutboundCalls();
 
-      // 如果執行到這裡表示外撥流程成功完成，確保錯誤狀態被清除
-      await this.clearError();
+        // 如果執行到這裡表示外撥流程成功完成，確保錯誤狀態被清除
+        await this.clearError();
+      }
 
     } catch (error) {
       const errorMsg = `外撥流程發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
