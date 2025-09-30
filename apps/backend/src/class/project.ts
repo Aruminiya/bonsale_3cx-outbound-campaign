@@ -821,9 +821,8 @@ export default class Project {
             warnWithTimestamp(`分機 ${previousCallRecord.dn} 的前一筆撥打記錄沒有 description 或 description2 描述資訊`);
             return;
           };
-
           await post9000Dummy(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
-          await post9000(previousCallRecord.description2, previousCallRecord.description, previousCallRecord.phone);
+          await post9000(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
           break;
         case "Connected":
           logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為已接通，前一通電話記錄為已接通`);
@@ -1005,8 +1004,8 @@ export default class Project {
           item.customerId,
           item.customer?.memberName || '未知客戶',
           item.customer?.phone || '',
-          item.description || null, // description
-          item.description2 || null, // description2
+          item.customer?.description || null, // description
+          item.customer?.description2 || null, // description2
           false, // dialing - 新項目預設為未撥打
           null   // dialingAt - 新項目預設為 null
         );
