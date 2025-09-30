@@ -56,25 +56,66 @@ export default function Home() {
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
     setWsStatus('connecting');
+    
+    // 設定前端心跳機制
+    let heartbeatInterval: NodeJS.Timeout;
+    
+    const startHeartbeat = () => {
+      // 每55秒發送一次 ping 到後端（比後端的60秒稍短）
+      heartbeatInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ event: 'ping', timestamp: Date.now() }));
+          console.log('💓 發送前端 ping');
+        }
+      }, 55000);
+    };
 
     ws.onopen = () => {
       setWsStatus('open');
       console.log('WebSocket 連線成功');
+      // 連線成功後開始心跳
+      startHeartbeat();
     };
+    
     ws.onmessage = (event) => {
       setWsMessage(event.data);
       console.log('收到 WebSocket 訊息:', event.data);
+      
+      // 處理後端的 pong 回應
+      try {
+        const message = JSON.parse(event.data);
+        if (message.event === 'pong') {
+          console.log('💚 收到後端 pong 回應');
+        }
+      } catch (error) {
+        // 如果不是 JSON 格式，忽略解析錯誤
+        console.log('JSON 解析失敗:', error);
+      }
     };
+    
     ws.onerror = (error) => {
       setWsStatus('error');
       console.error('WebSocket 錯誤:', error);
+      // 清理心跳定時器
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+      }
     };
+    
     ws.onclose = () => {
       setWsStatus('closed');
       console.log('WebSocket 連線關閉');
+      // 清理心跳定時器
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+      }
     };
 
     return () => {
+      // 清理心跳定時器
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+      }
       ws.close();
     };
   }, [WS_URL]);

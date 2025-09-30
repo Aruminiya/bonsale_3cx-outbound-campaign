@@ -157,12 +157,44 @@ async function recoverActiveProjects(): Promise<void> {
 ws.on('connection', async (wsClient) => {
   logWithTimestamp('🔌 WebSocket client connected');
   broadcastAllProjects(ws);
+  
+  // 設定心跳機制
+  let isAlive = true;
+  let heartbeatInterval: NodeJS.Timeout;
+  
+  // 每60秒發送一次 ping
+  const startHeartbeat = () => {
+    heartbeatInterval = setInterval(() => {
+      if (!isAlive) {
+        logWithTimestamp('💔 WebSocket client ping 超時，終止連線');
+        wsClient.terminate();
+        return;
+      }
+      
+      isAlive = false;
+      wsClient.ping();
+      logWithTimestamp('💓 發送 WebSocket ping');
+    }, 60000);
+  };
+  
+  // 開始心跳
+  startHeartbeat();
+  
+  // 監聽 pong 回應
+  wsClient.on('pong', () => {
+    logWithTimestamp('💚 收到 WebSocket pong');
+    isAlive = true;
+  });
 
   wsClient.on('message', async (message) => {
     try {
       const { event, payload } = JSON.parse(message.toString());
 
       switch (event) {
+        case 'ping':
+          // 回應前端的 ping 請求
+          wsClient.send(JSON.stringify({ event: 'pong', timestamp: Date.now() }));
+          break;
         case 'startOutbound':
           // 使用 Project 類的靜態方法初始化專案
           const projectInstance = await Project.initOutboundProject(payload.project);
@@ -193,6 +225,18 @@ ws.on('connection', async (wsClient) => {
 
   wsClient.on('close', () => {
     logWithTimestamp('👋 WebSocket client disconnected');
+    // 清理心跳定時器
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+    }
+  });
+  
+  wsClient.on('error', (error) => {
+    errorWithTimestamp('WebSocket client error:', error);
+    // 清理心跳定時器
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+    }
   });
 });
 
