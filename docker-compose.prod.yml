@@ -13,6 +13,11 @@ services:
     networks:
       - bonsale-network
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "128m"
+        max-file: "10"
 
   frontend:
     image: gcr.io/drvet-server-sysstore-bonvies/bonsale_3cx-outbound-campaign_frontend:test
@@ -24,6 +29,11 @@ services:
     networks:
       - bonsale-network
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
@@ -35,6 +45,11 @@ services:
     networks:
       - bonsale-network
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # Redis GUI 管理工具
   redis-commander:
@@ -49,6 +64,11 @@ services:
     networks:
       - bonsale-network
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   redis_data:
