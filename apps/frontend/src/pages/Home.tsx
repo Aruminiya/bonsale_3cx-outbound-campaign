@@ -78,14 +78,34 @@ export default function Home() {
     };
     
     ws.onmessage = (event) => {
-      setWsMessage(event.data);
+      
       console.log('收到 WebSocket 訊息:', event.data);
       
       // 處理後端的 pong 回應
       try {
         const message = JSON.parse(event.data);
-        if (message.event === 'pong') {
-          console.log('💚 收到後端 pong 回應');
+        switch (message.event) {
+          case 'pong':
+            console.log('💚 收到後端 pong 回應');
+            break;
+          case 'allProjects':
+            console.log('📋 收到所有專案訊息:', message.payload);
+            setWsMessage(event.data);
+            break;
+          case 'stopOutbound':
+            console.log('🛑 收到停止外撥訊息:', message.payload);
+            setWsMessage(event.data);
+            break;
+          case 'error':
+            console.error('🛑 收到錯誤訊息:', message.payload);
+            // 顯示錯誤訊息到 Snackbar
+            snackbarRef.current?.showSnackbar(
+              message.payload?.error?.message || '發生未知錯誤',
+              'error'
+            );
+            break;
+          default:
+            console.warn('未知的 WebSocket 訊息事件:', message.event);
         }
       } catch (error) {
         // 如果不是 JSON 格式，忽略解析錯誤
