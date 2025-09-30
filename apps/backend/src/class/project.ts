@@ -555,14 +555,16 @@ export default class Project {
    * @param broadcastWs 廣播 WebSocket 伺服器實例
    * @private
    */
-  private async broadcastProjectInfo(broadcastWs: WebSocketServer): Promise<void> {
-    try {
-      await broadcastAllProjects(broadcastWs);
-    } catch (error) {
-      errorWithTimestamp('廣播所有專案資訊失敗:', error);
-      // 廣播失敗不應該阻止外撥流程，所以這裡不拋出錯誤
+  private async broadcastProjectInfo(broadcastWs?: WebSocketServer): Promise<void> {
+      try {
+        if (broadcastWs) {
+          await broadcastAllProjects(broadcastWs);
+        }
+      } catch (error) {
+        errorWithTimestamp('廣播所有專案資訊失敗:', error);
+        // 廣播失敗不應該阻止外撥流程，所以這裡不拋出錯誤
+      }
     }
-  }
 
   /**
    * 執行外撥通話
@@ -786,6 +788,40 @@ export default class Project {
   }
 
   /**
+   * 統一的 API 錯誤處理方法
+   * @param apiName API 名稱
+   * @param result API 結果
+   * @param shouldThrow 是否拋出錯誤，預設為 true
+   * @private
+   */
+  private async handleApiError(apiName: string, result: { success: boolean; error?: { error?: string } }, shouldThrow: boolean = true): Promise<boolean> {
+    if (!result.success) {
+      const errorMsg = `${apiName} 失敗: ${result.error?.error || '未知錯誤'}`;
+      await this.setError(errorMsg);
+      errorWithTimestamp({ isForce: true }, `❌ ${apiName} 錯誤:`, {
+        projectId: this.projectId,
+        callFlowId: this.callFlowId,
+        state: this.state,
+        client_id: this.client_id,
+        agentQuantity: this.agentQuantity,
+        access_token: this.access_token ? '***已設置***' : '未設置',
+        recurrence: this.recurrence,
+        error: this.error,
+        wsConnected: this.wsManager?.isConnected() || false,
+        timestamp: new Date().toISOString(),
+        errorMsg
+      });
+      errorWithTimestamp({ isForce: true }, errorMsg);
+      
+      if (shouldThrow) {
+        throw new Error(errorMsg);
+      }
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * 記錄 Bonsale 通話結果
    * @param previousCallRecord 前一筆撥打記錄
    * @private
@@ -808,30 +844,42 @@ export default class Project {
       switch (status) {
         case "Dialing":
           logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為撥號中，前一通電話記錄為未接通`);
-          await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 2); // 2 表示未接通 更新 Bonsale 撥號狀態 失敗
-          await updateDialUpdate(previousCallRecord.projectId, previousCallRecord.customerId); // 紀錄失敗​次​數 ​這樣​後端​的​抓取​失​敗​名​單才​能​記​次​數 給​我​指定​的​失敗​名​單
+          const callStatusResult = await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 2); // 2 表示未接通 更新 Bonsale 撥號狀態 失敗
+          await this.handleApiError('updateCallStatus', callStatusResult);
+          
+          const dialUpdateResult = await updateDialUpdate(previousCallRecord.projectId, previousCallRecord.customerId); // 紀錄失敗​次​數 ​這樣​後端​的​抓取​失​敗​名​單才​能​記​次​數 給​我​指定​的​失敗​名​單
+          await this.handleApiError('updateDialUpdate', dialUpdateResult);
           
           // 記錄完成後，移除使用過的撥號名單項目
           await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
 
           // 更新自動撥號執行狀態
-          await updateBonsaleProjectAutoDialExecute(
+          const autoDialResult1 = await updateBonsaleProjectAutoDialExecute(
             this.projectId,
             this.callFlowId,
           );
+          await this.handleApiError('updateBonsaleProjectAutoDialExecute', autoDialResult1);
           
-          // TODO 這邊要再確認 description 跟 description2 要怎麼帶進去
           if ((!previousCallRecord.description || previousCallRecord.description.trim() === '')
              || (!previousCallRecord.description2 || previousCallRecord.description2.trim() === '')) {
             warnWithTimestamp(`分機 ${previousCallRecord.dn} 的前一筆撥打記錄沒有 description 或 description2 描述資訊`);
             return;
           };
-          await post9000Dummy(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
-          await post9000(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
+          const dummyResult = await post9000Dummy(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
+          await this.handleApiError('post9000Dummy', dummyResult);
+          
+          const result = await post9000(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
+          if (!result.success) {
+            const errorMsg = `post9000 失敗: ${result.error?.error || '未知錯誤'}`;
+            console.log('===========errorMsg', errorMsg);
+            await this.handleApiError('post9000', result, false); // 不拋出錯誤，只記錄
+            await this.broadcastProjectInfo(this.broadcastWsRef); // 廣播更新的專案資訊（包含錯誤）
+          }
           break;
         case "Connected":
           logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為已接通，前一通電話記錄為已接通`);
-          await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 1); // 1 表示已接通 更新 Bonsale 撥號狀態 成功
+          const callStatusResult2 = await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 1); // 1 表示已接通 更新 Bonsale 撥號狀態 成功
+          await this.handleApiError('updateCallStatus (Connected)', callStatusResult2);
           const visitedAt = previousCallRecord.dialTime || new Date().toISOString(); // 使用撥打時間或當前時間
           
           // 記錄完成後，移除使用過的撥號名單項目
@@ -839,22 +887,43 @@ export default class Project {
           
           // 延遲 100 毫秒後再更新拜訪紀錄，確保狀態更新完成
           setTimeout(async () => {
-            await updateVisitRecord(  // 紀錄 ​寫入​訪談​紀錄 ( ​要​延遲​是​因為​ 後端​需要​時間​寫入​資料​庫 讓​抓​名​單邏輯​正常​ )
-              previousCallRecord.projectId, 
-              previousCallRecord.customerId,
-              'intro',
-              'admin',
-              visitedAt,
-              '撥打成功',
-              '撥打成功'
-            );
+            try {
+              const visitRecordResult = await updateVisitRecord(  // 紀錄 ​寫入​訪談​紀錄 ( ​要​延遲​是​因為​ 後端​需要​時間​寫入​資料​庫 讓​抓​名​單邏輯​正常​ )
+                previousCallRecord.projectId, 
+                previousCallRecord.customerId,
+                'intro',
+                'admin',
+                visitedAt,
+                '撥打成功',
+                '撥打成功'
+              );
+              await this.handleApiError('updateVisitRecord', visitRecordResult, false);
+            } catch (error) {
+              const errorMsg = `updateVisitRecord 異常: ${error instanceof Error ? error.message : String(error)}`;
+              await this.setError(errorMsg);
+              logWithTimestamp({ isForce: true }, '❌ updateVisitRecord 異常:', {
+                projectId: this.projectId,
+                callFlowId: this.callFlowId,
+                state: this.state,
+                client_id: this.client_id,
+                agentQuantity: this.agentQuantity,
+                access_token: this.access_token ? '***已設置***' : '未設置',
+                recurrence: this.recurrence,
+                error: this.error,
+                wsConnected: this.wsManager?.isConnected() || false,
+                timestamp: new Date().toISOString(),
+                errorMsg
+              });
+              errorWithTimestamp({ isForce: true }, errorMsg);
+            }
           }, 100);
 
           // 更新自動撥號執行狀態
-          await updateBonsaleProjectAutoDialExecute(
+          const autoDialResult2 = await updateBonsaleProjectAutoDialExecute(
             this.projectId,
             this.callFlowId,
           );
+          await this.handleApiError('updateBonsaleProjectAutoDialExecute (Connected)', autoDialResult2);
           break;
         default:
           warnWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為未知，無法記錄前一通電話結果`);
