@@ -95,14 +95,14 @@ export default function useConnectBonsaleWebHookWebSocket({ setProjectOutboundDa
                     return {
                       ...item,
                       // 更新相關欄位
-                      appId: updatedAutoDialData.appId || item.appId,
-                      appSecret: updatedAutoDialData.appSecret || item.appSecret,
-                      callFlowId: updatedAutoDialData.callFlow?.Id || item.callFlowId,
-                      projectName: updatedAutoDialData.projectInfo?.projectName || item.projectName,
-                      startDate: updatedAutoDialData.projectInfo?.startDate || item.startDate,
-                      endDate: updatedAutoDialData.projectInfo?.endDate || item.endDate,
-                      extension: updatedAutoDialData.callFlow?.phone || item.extension,
-                      isEnable: updatedAutoDialData.projectInfo?.isEnable ?? item.isEnable,
+                      appId: updatedAutoDialData.appId,
+                      appSecret: updatedAutoDialData.appSecret,
+                      callFlowId: updatedAutoDialData.callFlow?.Id,
+                      projectName: updatedAutoDialData.projectInfo?.projectName,
+                      startDate: updatedAutoDialData.projectInfo?.startDate,
+                      endDate: updatedAutoDialData.projectInfo?.endDate,
+                      extension: updatedAutoDialData.callFlow?.phone,
+                      isEnable: updatedAutoDialData.projectInfo?.isEnable,
                     };
                   }
                   return item;
