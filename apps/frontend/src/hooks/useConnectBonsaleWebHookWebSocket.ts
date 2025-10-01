@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import useGetOneBonsaleAutoDial from './api/useGetOneBonsaleAutoDial';
 
 // 取得本機 IP domain
 const { hostname } = window.location;
@@ -20,6 +21,7 @@ type ConnectBonsaleWebHookWebSocketProps = {
 
 export default function useConnectBonsaleWebHookWebSocket({ setProjectOutboundData }: ConnectBonsaleWebHookWebSocketProps) {
   const wsRef = useRef<WebSocket | null>(null);
+  const { getOneBonsaleAutoDial } = useGetOneBonsaleAutoDial();
 
   // 處理 WebSocket 訊息
   const handleWebSocketMessage = useCallback(async (event: MessageEvent) => {
@@ -36,7 +38,41 @@ export default function useConnectBonsaleWebHookWebSocket({ setProjectOutboundDa
         }
         case 'auto-dial.updated': {
           console.log('📝 更新專案外撥設定:', message.body);
-          // 這裡可以根據需要處理更新專案的邏輯
+          const { callFlowId, projectId } = message.body as { Id: string; callFlowId: string; projectId: string };
+          
+          if (projectId && callFlowId) {
+            try {
+              // 獲取更新後的專案外撥設定資料
+              const updatedAutoDialData = await getOneBonsaleAutoDial(projectId, callFlowId);
+              
+              console.log('🔄 更新的外撥設定資料:', updatedAutoDialData);
+              
+              // 更新前端的專案資料
+              setProjectOutboundData(prevData => 
+                prevData.map(item => {
+                  if (item.projectId === projectId) {
+                    return {
+                      ...item,
+                      // 更新相關欄位
+                      appId: updatedAutoDialData.appId || item.appId,
+                      appSecret: updatedAutoDialData.appSecret || item.appSecret,
+                      callFlowId: updatedAutoDialData.callFlow?.Id || item.callFlowId,
+                      projectName: updatedAutoDialData.projectInfo?.projectName || item.projectName,
+                      startDate: updatedAutoDialData.projectInfo?.startDate || item.startDate,
+                      endDate: updatedAutoDialData.projectInfo?.endDate || item.endDate,
+                      extension: updatedAutoDialData.callFlow?.phone || item.extension,
+                      isEnable: updatedAutoDialData.projectInfo?.isEnable ?? item.isEnable,
+                    };
+                  }
+                  return item;
+                })
+              );
+              
+              console.log('✅ 專案外撥設定更新完成');
+            } catch (error) {
+              console.error('❌ 更新專案外撥設定失敗:', error);
+            }
+          }
           break;
         }
         case 'project.updated': {
@@ -62,7 +98,7 @@ export default function useConnectBonsaleWebHookWebSocket({ setProjectOutboundDa
     } catch (error) {
       console.error('❌ 處理 Bonsale WebHook 訊息時發生錯誤:', error);
     }
-  }, [setProjectOutboundData]);
+  }, [setProjectOutboundData, getOneBonsaleAutoDial]);
 
   // 建立 WebSocket 連線
   const connectWebSocket = useCallback(() => {
