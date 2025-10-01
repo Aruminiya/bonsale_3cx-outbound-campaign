@@ -28,6 +28,7 @@ import useProjectOutboundData from '../hooks/useProjectOutboundData';
 
 import useUpdateBonsaleProject from '../hooks/api/useUpdateBonsaleProject';
 
+const VITE_ENV = import.meta.env.VITE_ENV;
 export default function Home() {
   // WebSocket 狀態
   const [wsStatus, setWsStatus] = useState<'connecting'|'open'|'closed'|'error'>('connecting');
@@ -238,7 +239,9 @@ export default function Home() {
 
   // 全部專案開始外撥
   const handleAllProjectStartOutbound = async () => {
-
+    for (const project of projectOutboundData) {
+      handleStartOutbound(project);
+    }
   }
 
   // 切換專案啟用狀態
@@ -271,21 +274,23 @@ export default function Home() {
   return (
     <>
       {/* WebSocket 狀態顯示 */}
-      <Alert 
-        severity={wsStatus === 'open' ? 'success' : wsStatus === 'closed' ? 'error' : 'info'}
-        sx={{ mb: 2 }}
-      >
-        WebSocket 狀態：{wsStatus}
-        {wsMessage && <Box sx={{ mt: 1 }}>收到訊息：{wsMessage}</Box>}
-        {wsStatus === 'open' && (
-          <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-            
-            {/* <Button size="small" variant="contained" onClick={() => sendMessage('測試訊息發送')}>
-              測試訊息發送
-            </Button> */}
-          </Stack>
-        )}
-      </Alert>
+      {VITE_ENV === 'development' && (
+        <Alert 
+          severity={wsStatus === 'open' ? 'success' : wsStatus === 'closed' ? 'error' : 'info'}
+          sx={{ mb: 2 }}
+        >
+          WebSocket 狀態：{wsStatus}
+          {wsMessage && <Box sx={{ mt: 1 }}>收到訊息：{wsMessage}</Box>}
+          {wsStatus === 'open' && (
+            <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+              
+              {/* <Button size="small" variant="contained" onClick={() => sendMessage('測試訊息發送')}>
+                測試訊息發送
+              </Button> */}
+            </Stack>
+          )}
+        </Alert>
+      )}
       <GlobalSnackbar ref={snackbarRef} />
       <Stack 
         direction='row'
@@ -300,14 +305,6 @@ export default function Home() {
         }}
       >
         <Stack spacing={1}>
-          <Stack direction="row" spacing={1}>
-            <Alert severity="warning">
-              自動外撥專案執行期間 暫停動作時，會同步掛斷當前通話，請警慎使用。
-            </Alert>
-            <Alert severity="info">
-              暫停動作後可使用停止動作，將專案恢復成初始狀態。
-            </Alert>
-          </Stack>
           <Stack direction="row" alignItems="center" spacing={1}>
             <Button 
               variant="contained" 

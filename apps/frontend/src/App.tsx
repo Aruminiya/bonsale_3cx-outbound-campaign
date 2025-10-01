@@ -15,6 +15,8 @@ const port = import.meta.env.VITE_API_PORT;
 const domain = import.meta.env.VITE_DOMAIN;
 const HTTP_HOST = domain === 'localhost'? `${api_protocol}://${hostname}:${port}` :`${api_protocol}://${domain}:${port}`;
 console.log('HTTP_HOST:', HTTP_HOST);
+const VITE_ENV = import.meta.env.VITE_ENV;
+console.log('VITE_ENV:', VITE_ENV);
 
 function App() {
   return (
