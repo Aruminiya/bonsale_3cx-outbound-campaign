@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 
-import { router as bonsaleRouter } from './routes/bonsale';
+import { router as bonsaleRouter, clientWsWebHook } from './routes/bonsale';
 
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from './util/timestamp';
 import Project from './class/project';
@@ -61,8 +61,25 @@ app.use((err: Error, req: express.Request, res: express.Response, _next: express
 // Start server
 const httpServer = createServer(app);
 
-// 建立 WebSocket 服務器
-const ws = new WebSocketServer({ server: httpServer });
+// 建立主要 WebSocket 服務器
+const mainWebSocketServer = new WebSocketServer({ noServer: true });
+
+// 處理 WebSocket 升級請求
+httpServer.on('upgrade', (request, socket, head) => {
+  const pathname = new URL(request.url!, `http://${request.headers.host}`).pathname;
+  
+  if (pathname === '/api/bonsale/WebHook') {
+    // 處理 Bonsale WebHook WebSocket 連接
+    clientWsWebHook.handleUpgrade(request, socket, head, (websocket) => {
+      clientWsWebHook.emit('connection', websocket, request);
+    });
+  } else {
+    // 處理主要的 WebSocket 連接
+    mainWebSocketServer.handleUpgrade(request, socket, head, (websocket) => {
+      mainWebSocketServer.emit('connection', websocket, request);
+    });
+  }
+});
 
 // 輕量級管理：只維護活躍專案實例的引用（用於正確停止）
 const activeProjects = new Map<string, Project>();
@@ -116,10 +133,10 @@ async function recoverActiveProjects(): Promise<void> {
             }
             
             // 設定廣播 WebSocket 引用
-            projectInstance.setBroadcastWebSocket(ws);
+            projectInstance.setBroadcastWebSocket(mainWebSocketServer);
             
             // 重新建立 3CX WebSocket 連接
-            await projectInstance.create3cxWebSocketConnection(ws);
+            await projectInstance.create3cxWebSocketConnection(mainWebSocketServer);
             
             logWithTimestamp({ isForce: true }, `✅ 專案 ${savedProject.projectId} 恢復成功，代理數量: ${savedProject.agentQuantity}`);
           } else {
@@ -134,7 +151,7 @@ async function recoverActiveProjects(): Promise<void> {
       logWithTimestamp({ isForce: true }, `🎉 專案恢復完成，成功恢復 ${activeProjects.size} 個專案`);
       
       // 廣播更新後的專案列表
-      await broadcastAllProjects(ws);
+      await broadcastAllProjects(mainWebSocketServer);
     } else {
       logWithTimestamp({ isForce: true }, '⏸️ 自動恢復功能未啟用，跳過專案恢復');
 
@@ -154,9 +171,9 @@ async function recoverActiveProjects(): Promise<void> {
   }
 }
 
-ws.on('connection', async (wsClient) => {
+mainWebSocketServer.on('connection', async (wsClient) => {
   logWithTimestamp('🔌 WebSocket client connected');
-  broadcastAllProjects(ws);
+  broadcastAllProjects(mainWebSocketServer);
   
   // 設定心跳機制
   let isAlive = true;
@@ -201,14 +218,14 @@ ws.on('connection', async (wsClient) => {
           // 將活躍的專案實例保存到Map中（這樣才能正確停止WebSocket連接）
           activeProjects.set(payload.project.projectId, projectInstance);
           // 設定廣播 WebSocket 引用以供錯誤廣播使用
-          projectInstance.setBroadcastWebSocket(ws);
-          // 連線 3CX WebSocket，並傳入 ws 實例以便廣播
-          await projectInstance.create3cxWebSocketConnection(ws);
+          projectInstance.setBroadcastWebSocket(mainWebSocketServer);
+          // 連線 3CX WebSocket，並傳入 mainWebSocketServer 實例以便廣播
+          await projectInstance.create3cxWebSocketConnection(mainWebSocketServer);
           break;
         case 'stopOutbound':
           logWithTimestamp('停止 外撥事件:', payload.project);
           // 使用 Project 類的靜態方法停止外撥專案
-          const stopSuccess = await Project.stopOutboundProject(payload.project, activeProjects, ws);
+          const stopSuccess = await Project.stopOutboundProject(payload.project, activeProjects, mainWebSocketServer);
           if (!stopSuccess) {
             warnWithTimestamp(`停止專案 ${payload.project.projectId} 失敗`);
           }
@@ -219,7 +236,7 @@ ws.on('connection', async (wsClient) => {
     } catch (error) {
       errorWithTimestamp('WebSocket message handling error:', error);
       // 發送錯誤訊息給客戶端
-      broadcastError(ws, error);
+      broadcastError(mainWebSocketServer, error);
     }
   });
 
@@ -246,9 +263,9 @@ httpServer.listen(PORT, async () => {
     await initRedis();
     
     logWithTimestamp({ isForce: true }, `🚀 Server is running on port ${PORT}`);
-    logWithTimestamp({ isForce: true }, `📍 Check: http://localhost:${PORT}`);
     logWithTimestamp({ isForce: true }, `🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-    logWithTimestamp({ isForce: true }, `🔌 WebSocket server is running at ws://localhost:${PORT}`);
+    logWithTimestamp({ isForce: true }, `🔌 WebSocket server is running on port ${PORT}`);
+    logWithTimestamp({ isForce: true }, `🖥️ Bonsale WebHook WebSocket is available on port ${PORT}/api/bonsale/webhook-ws`);
     logWithTimestamp({ isForce: true }, `🔴 Redis server is connected`);
     
     // 🆕 自動恢復之前的活躍專案

@@ -25,6 +25,7 @@ import GlobalSnackbar, { type GlobalSnackbarRef } from '../components/GlobalSnac
 import ProjectCustomersDialog from '../components/ProjectCustomersDialog';
 
 import useProjectOutboundData from '../hooks/useProjectOutboundData';
+import useConnectBonsaleWebHookWebSocket from '../hooks/useConnectBonsaleWebHookWebSocket';
 
 import useUpdateBonsaleProject from '../hooks/api/useUpdateBonsaleProject';
 
@@ -163,6 +164,10 @@ export default function Home() {
   const snackbarRef = useRef<GlobalSnackbarRef>(null);
 
   const { projectOutboundData, setProjectOutboundData, isLoading: projectOutboundDataIsloading, loadMore, hasMore  } = useProjectOutboundData();
+  
+  // 使用 Bonsale WebHook WebSocket hook
+  const { isConnected: bonsaleWebHookConnected, disconnect: disconnectBonsaleWebHook } = useConnectBonsaleWebHookWebSocket({ setProjectOutboundData });
+  
   const tableBoxRef = useRef<HTMLDivElement>(null);
 
   // 滾動到底自動加載
@@ -340,21 +345,42 @@ export default function Home() {
     <>
       {/* WebSocket 狀態顯示 */}
       {VITE_ENV === 'development' && (
-        <Alert 
-          severity={wsStatus === 'open' ? 'success' : wsStatus === 'closed' ? 'error' : 'info'}
-          sx={{ mb: 2 }}
-        >
-          WebSocket 狀態：{wsStatus}
-          {wsMessage && <Box sx={{ mt: 1 }}>收到訊息：{wsMessage}</Box>}
-          {wsStatus === 'open' && (
-            <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-              
-              {/* <Button size="small" variant="contained" onClick={() => sendMessage('測試訊息發送')}>
-                測試訊息發送
-              </Button> */}
-            </Stack>
-          )}
-        </Alert>
+        <>
+          <Alert 
+            severity={wsStatus === 'open' ? 'success' : wsStatus === 'closed' ? 'error' : 'info'}
+            sx={{ mb: 1 }}
+          >
+            主要 WebSocket 狀態：{wsStatus}
+            {wsMessage && <Box sx={{ mt: 1 }}>收到訊息：{wsMessage}</Box>}
+            {wsStatus === 'open' && (
+              <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                
+                {/* <Button size="small" variant="contained" onClick={() => sendMessage('測試訊息發送')}>
+                  測試訊息發送
+                </Button> */}
+              </Stack>
+            )}
+          </Alert>
+          
+          <Alert 
+            severity={bonsaleWebHookConnected ? 'success' : 'warning'}
+            sx={{ mb: 2 }}
+          >
+            📡 Bonsale WebHook 狀態：{bonsaleWebHookConnected ? '已連接' : '未連接'}
+            {bonsaleWebHookConnected && (
+              <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                <Button 
+                  size="small" 
+                  variant="outlined" 
+                  onClick={disconnectBonsaleWebHook}
+                  color="warning"
+                >
+                  中斷 WebHook 連接
+                </Button>
+              </Stack>
+            )}
+          </Alert>
+        </>
       )}
       <GlobalSnackbar ref={snackbarRef} />
       <Stack 
