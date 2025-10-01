@@ -34,6 +34,12 @@ export default function Home() {
   const [wsStatus, setWsStatus] = useState<'connecting'|'open'|'closed'|'error'>('connecting');
   const [wsMessage, setWsMessage] = useState<string>('');
   const wsRef = useRef<WebSocket | null>(null);
+  
+  // 開始外撥按鈕 loading 狀態 (以 projectId 為 key)
+  const [startOutboundLoading, setStartOutboundLoading] = useState<Set<string>>(new Set());
+  
+  // 停止外撥按鈕 loading 狀態 (以 projectId 為 key)
+  const [stopOutboundLoading, setStopOutboundLoading] = useState<Set<string>>(new Set());
 
   // 發送 WS 訊息
   const sendMessage = (message: SendMessagePayload<SendProjectMessage>) => {
@@ -194,9 +200,58 @@ export default function Home() {
   const getProjectCallMessage = (projectId: string): WebSocketProject | undefined => {
     return projectCallMessageMap.get(projectId);
   };
+
+  // 監聽 WebSocket 訊息變化，檢查是否需要結束 loading
+  useEffect(() => {
+    if (!parsedWsMessage?.payload?.allProjects) return;
+
+    // 檢查每個正在 loading 的按鈕
+    // 處理開始撥打 loading
+    setStartOutboundLoading(prev => {
+      const newSet = new Set(prev);
+      let hasChange = false;
+
+      prev.forEach(projectId => {
+        const projectWsData = projectCallMessageMap.get(projectId);
+        // 如果收到了該專案的回應(有 WebSocket 資料)，則結束開始 loading
+        if (projectWsData) {
+          newSet.delete(projectId);
+          hasChange = true;
+        }
+      });
+
+      return hasChange ? newSet : prev;
+    });
+
+    // 處理停止撥打 loading
+    setStopOutboundLoading(prev => {
+      const newSet = new Set(prev);
+      let hasChange = false;
+
+      prev.forEach(projectId => {
+        const projectWsData = projectCallMessageMap.get(projectId);
+        // 如果狀態是 'stop' 且沒有當前撥打資訊，則結束 loading
+        if (projectWsData?.state === 'stop' && 
+            (!projectWsData.latestCallRecord || projectWsData.latestCallRecord.length === 0)) {
+          newSet.delete(projectId);
+          hasChange = true;
+        }
+      });
+
+      return hasChange ? newSet : prev;
+    });
+  }, [parsedWsMessage, projectCallMessageMap]);
  
   // 開始撥打電話
   const handleStartOutbound = (project: ProjectOutboundDataType) => {
+    // 如果已經在 loading 中，直接返回
+    if (startOutboundLoading.has(project.projectId)) {
+      return;
+    }
+
+    // 設置 loading 狀態
+    setStartOutboundLoading(prev => new Set(prev).add(project.projectId));
+
     const message = {
       event: 'startOutbound',
       payload: {
@@ -211,6 +266,8 @@ export default function Home() {
     }
 
     sendMessage(message);
+
+    // 等待後端回應才移除 loading 狀態
   };
 
   // 暫停撥打電話
@@ -220,6 +277,14 @@ export default function Home() {
 
   // 停止撥打電話
   const handleStopOutbound = (project: ProjectOutboundDataType) => {
+    // 如果已經在 loading 中，直接返回
+    if (stopOutboundLoading.has(project.projectId)) {
+      return;
+    }
+
+    // 設置 loading 狀態
+    setStopOutboundLoading(prev => new Set(prev).add(project.projectId));
+
     const message = {
       event: 'stopOutbound',
       payload: {
@@ -366,6 +431,7 @@ export default function Home() {
                 </TableRow>
             }
             {projectOutboundData.map((item, index) => {
+              const projectWsData = getProjectCallMessage(item.projectId);
               return (
                 <Fragment key={item.projectId + index}>
                   <TableRow 
@@ -398,7 +464,10 @@ export default function Home() {
                           const stateLabel = projectWsData.state === 'active' ? '執行中' :
                                               projectWsData.state === 'stop' ? '停止撥打' :
                                               projectWsData.state;
-                          return <Chip label={stateLabel} sx={{ bgcolor: 'success.main', color: 'white' }} />;
+                          const stateColor = projectWsData.state === 'active' ? 'success.main' :
+                                              projectWsData.state === 'stop' ? 'warning.main' :
+                                              'primary.color50';
+                          return <Chip label={stateLabel} sx={{ bgcolor: stateColor, color: 'white' }} />;
                         }
                       })()}
                     </TableCell>
@@ -407,27 +476,33 @@ export default function Home() {
                     </TableCell>
                     <TableCell align='center'>
                       <Stack direction='row'>
-                        {(() => {
-                          const projectWsData = getProjectCallMessage(item.projectId);
-                          if (!projectWsData) {
-                            return <IconButton 
+                        {item.isEnable ? 
+                          !projectWsData ? 
+                            <IconButton 
                               onClick={() => handleStartOutbound(item)}
-                                  color="success"
-                                  title="開始外撥"
-                                >
-                                  <PlayArrowIcon />
-                                </IconButton>;
-                              } else {
-                                return <IconButton 
+                              color="success"
+                              title="開始外撥"
+                              disabled={startOutboundLoading.has(item.projectId)}
+                            >
+                              {startOutboundLoading.has(item.projectId) ? (
+                                <CircularProgress size={20} color="inherit" />
+                              ) : (
+                                <PlayArrowIcon />
+                              )}
+                            </IconButton> : 
+                                <IconButton 
                                   onClick={() => handleStopOutbound(item)}
                                   color="error"
                                   title="停止外撥"
+                                  disabled={stopOutboundLoading.has(item.projectId)}
                                 >
-                                  <StopIcon />
-                                </IconButton>;
-                              }
-                          })()
-                        }
+                                  {stopOutboundLoading.has(item.projectId) ? (
+                                    <CircularProgress size={20} color="inherit" />
+                                  ) : (
+                                    <StopIcon />
+                                  )}
+                                </IconButton> 
+                          : null} 
                         <IconButton 
                           onClick={() => handleExpandClick(true, item.projectId)}
                           title="查看詳細"
