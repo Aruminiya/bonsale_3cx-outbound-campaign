@@ -85,9 +85,7 @@ export default function Home() {
     };
     
     ws.onmessage = (event) => {
-      
-      console.log('收到 WebSocket 訊息:', event.data);
-      
+      console.log('收到 WebSocket 訊息:', JSON.parse(event.data));
       // 處理後端的 pong 回應
       try {
         const message = JSON.parse(event.data);
@@ -267,7 +265,18 @@ export default function Home() {
 
     sendMessage(message);
 
-    // 等待後端回應才移除 loading 狀態
+    // 5 秒超時機制：如果後端沒有回應，強制移除 loading 狀態
+    setTimeout(() => {
+      setStartOutboundLoading(prev => {
+        if (prev.has(project.projectId)) {
+          console.warn(`⚠️ 開始外撥超時，強制移除 loading 狀態: ${project.projectId}`);
+          const newSet = new Set(prev);
+          newSet.delete(project.projectId);
+          return newSet;
+        }
+        return prev;
+      });
+    }, 5000);
   };
 
   // 暫停撥打電話
@@ -300,6 +309,19 @@ export default function Home() {
     }
 
     sendMessage(message);
+
+    // 5 秒超時機制：如果後端沒有回應，強制移除 loading 狀態
+    setTimeout(() => {
+      setStopOutboundLoading(prev => {
+        if (prev.has(project.projectId)) {
+          console.warn(`⚠️ 停止外撥超時，強制移除 loading 狀態: ${project.projectId}`);
+          const newSet = new Set(prev);
+          newSet.delete(project.projectId);
+          return newSet;
+        }
+        return prev;
+      });
+    }, 5000);
   };
 
   // 全部專案開始外撥
@@ -432,6 +454,21 @@ export default function Home() {
             }
             {projectOutboundData.map((item, index) => {
               const projectWsData = getProjectCallMessage(item.projectId);
+              const projectWsDataState = projectWsData?.state;
+              const stateLabel = projectWsData
+                ? projectWsDataState === 'active'
+                  ? '執行中'
+                  : projectWsDataState === 'stop'
+                  ? '停止撥打'
+                  : projectWsDataState
+                : '未執行';
+              const stateColor = projectWsData
+                ? projectWsDataState === 'active'
+                  ? 'success.main'
+                  : projectWsDataState === 'stop'
+                  ? 'warning.main'
+                  : 'primary.color50'
+                : 'primary.color50';
               return (
                 <Fragment key={item.projectId + index}>
                   <TableRow 
@@ -457,16 +494,11 @@ export default function Home() {
                     </TableCell>
                     <TableCell align='center'>
                       {(() => {
-                        const projectWsData = getProjectCallMessage(item.projectId);
+
                         if (!projectWsData) {
                           return <Chip label="未執行" sx={{ bgcolor: 'primary.color50' }} />;
                         } else {
-                          const stateLabel = projectWsData.state === 'active' ? '執行中' :
-                                              projectWsData.state === 'stop' ? '停止撥打' :
-                                              projectWsData.state;
-                          const stateColor = projectWsData.state === 'active' ? 'success.main' :
-                                              projectWsData.state === 'stop' ? 'warning.main' :
-                                              'primary.color50';
+
                           return <Chip label={stateLabel} sx={{ bgcolor: stateColor, color: 'white' }} />;
                         }
                       })()}
@@ -494,7 +526,9 @@ export default function Home() {
                                   onClick={() => handleStopOutbound(item)}
                                   color="error"
                                   title="停止外撥"
-                                  disabled={stopOutboundLoading.has(item.projectId)}
+                                  disabled={stopOutboundLoading.has(item.projectId) ||
+                                    projectWsDataState === 'stop'
+                                   }
                                 >
                                   {stopOutboundLoading.has(item.projectId) ? (
                                     <CircularProgress size={20} color="inherit" />
