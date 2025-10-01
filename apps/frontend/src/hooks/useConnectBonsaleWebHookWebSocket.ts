@@ -32,8 +32,49 @@ export default function useConnectBonsaleWebHookWebSocket({ setProjectOutboundDa
       switch (message.type) {
         case 'auto-dial.created': {
           console.log('🆕 新增專案外撥設定:', message.body);
-          // 這裡可以根據需要處理新增專案的邏輯
-          // 例如重新獲取專案列表或直接添加到現有列表
+          const { callFlowId, projectId } = message.body as { Id: string; callFlowId: string; projectId: string };
+          
+          if (projectId && callFlowId) {
+            try {
+              // 獲取新創建的專案外撥設定資料
+              const newAutoDialData = await getOneBonsaleAutoDial(projectId, callFlowId);
+              
+              console.log('🔄 新增的外撥設定資料:', newAutoDialData);
+              
+              // 檢查專案是否已存在，避免重複添加
+              setProjectOutboundData(prevData => {
+                const existingProject = prevData.find(item => 
+                  item.projectId === projectId && item.callFlowId === callFlowId
+                );
+                
+                if (existingProject) {
+                  console.log('📋 專案已存在，跳過添加:', projectId);
+                  return prevData;
+                }
+                
+                // 創建新的專案資料物件
+                const newProjectData: ProjectOutboundDataType = {
+                  appId: newAutoDialData.appId,
+                  appSecret: newAutoDialData.appSecret,
+                  callFlowId: newAutoDialData.callFlow?.Id || callFlowId,
+                  projectId: newAutoDialData.projectId || projectId,
+                  projectName: newAutoDialData.projectInfo?.projectName || '未知專案',
+                  startDate: newAutoDialData.projectInfo?.startDate || new Date(),
+                  endDate: newAutoDialData.projectInfo?.endDate || new Date(),
+                  extension: newAutoDialData.callFlow?.phone || '',
+                  recurrence: null, // 根據需要設定
+                  isEnable: newAutoDialData.projectInfo?.isEnable ?? true,
+                };
+                
+                // 將新專案添加到列表頂部
+                return [newProjectData, ...prevData];
+              });
+              
+              console.log('✅ 新專案外撥設定添加完成');
+            } catch (error) {
+              console.error('❌ 添加新專案外撥設定失敗:', error);
+            }
+          }
           break;
         }
         case 'auto-dial.updated': {
