@@ -86,16 +86,16 @@ export default function Home() {
     };
     
     ws.onmessage = (event) => {
-      console.log('收到 WebSocket 訊息:', JSON.parse(event.data));
+      console.log('📣 收到 WebSocket 訊息:', JSON.parse(event.data));
       // 處理後端的 pong 回應
       try {
         const message = JSON.parse(event.data);
         switch (message.event) {
           case 'pong':
-            console.log('💚 收到後端 pong 回應');
+            // console.log('💚 收到後端 pong 回應');
             break;
           case 'allProjects':
-            console.log('📋 收到所有專案訊息:', message.payload);
+            // console.log('📋 收到所有專案訊息:', message.payload);
             setWsMessage(event.data);
             break;
           case 'stopOutbound':
@@ -373,8 +373,12 @@ export default function Home() {
             severity={wsStatus === 'open' ? 'success' : wsStatus === 'closed' ? 'error' : 'info'}
             sx={{ mb: 1 }}
           >
-            主要 WebSocket 狀態：{wsStatus}
-            {wsMessage && <Box sx={{ mt: 1 }}>收到訊息：{wsMessage}</Box>}
+            主要 WebSocket 狀態：{wsStatus.length > 20 ? `${wsStatus.substring(0, 20)}...` : wsStatus}
+            {wsMessage && (
+              <Box sx={{ mt: 1 }}>
+                收到訊息：{wsMessage.length > 300 ? `${wsMessage.substring(0, 300)}...` : wsMessage}
+              </Box>
+            )}
             {wsStatus === 'open' && (
               <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
                 
