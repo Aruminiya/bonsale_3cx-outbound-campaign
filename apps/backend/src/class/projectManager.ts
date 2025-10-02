@@ -2,6 +2,19 @@ import redisClient from '../services/redis';
 import Project from './project';
 import { logWithTimestamp, errorWithTimestamp } from '../util/timestamp';
 
+// 定義當前撥打記錄的類型
+type CurrentCallRecord = Array<{
+  customerId: string;
+  memberName: string;
+  phone: string;
+  description: string | null;
+  description2: string | null;
+  status: "Dialing" | "Connected";
+  projectId: string;
+  dn?: string; // 撥打的分機號碼
+  dialTime?: string; // 撥打時間
+} | null> | null;
+
 export class ProjectManager {
   private static readonly PROJECT_PREFIX = 'project:';
   private static readonly ACTIVE_PROJECTS_SET = 'active_projects';
@@ -22,7 +35,8 @@ export class ProjectManager {
         error: project.error || '',
         access_token: project.access_token || '',
         caller: project.caller ? JSON.stringify(project.caller) : '',
-        agentQuantity: project.agentQuantity.toString(),
+        latestCallRecord: project.latestCallRecord ? JSON.stringify(project.latestCallRecord) : '',
+        agentQuantity: project.agentQuantity?.toString() || '0',
         recurrence: project.recurrence || '',
         // ws_3cx 不儲存，因為 WebSocket 無法序列化
         createdAt: new Date().toISOString(),
@@ -35,10 +49,10 @@ export class ProjectManager {
       // 將專案 ID 加入活躍專案集合
       await redisClient.sAdd(this.ACTIVE_PROJECTS_SET, project.projectId);
       
-      // 設置過期時間（例如：24小時）
+      // 設置過期時間（註解掉表示永不過期）
       // await redisClient.expire(projectKey, 24 * 60 * 60);
       
-      logWithTimestamp(`專案 ${project.projectId} 已儲存到 Redis`);
+      logWithTimestamp(`專案 ${project.projectId} 已儲存到 Redis（永久保存）`);
     } catch (error) {
       errorWithTimestamp('儲存專案到 Redis 失敗:', error);
       throw error;
@@ -65,7 +79,7 @@ export class ProjectManager {
         projectData.error || null,
         projectData.access_token || null,
         projectData.caller ? JSON.parse(projectData.caller) : null,
-        projectData.latestCallRecord ? JSON.parse(projectData.latestCallRecord) : [],
+        projectData.latestCallRecord =  projectData.latestCallRecord ? JSON.parse(projectData.latestCallRecord) : [],
         parseInt(projectData.agentQuantity) || 0,
         projectData.recurrence || null
       );
@@ -107,6 +121,17 @@ export class ProjectManager {
     }
   }
 
+  // 取得活躍專案數量
+  static async getActiveProjectsCount(): Promise<number> {
+    try {
+      const count = await redisClient.sCard(this.ACTIVE_PROJECTS_SET);
+      return count;
+    } catch (error) {
+      errorWithTimestamp('取得活躍專案數量失敗:', error);
+      return 0;
+    }
+  }
+
   // 更新專案狀態
   static async updateProjectAction(projectId: string, state: 'active' | 'stop'): Promise<void> {
     try {
@@ -135,6 +160,68 @@ export class ProjectManager {
       logWithTimestamp(`專案 ${projectId} Access Token 已更新`);
     } catch (error) {
       errorWithTimestamp('更新專案 Access Token 失敗:', error);
+      throw error;
+    }
+  }
+
+  // 更新專案 Caller 資訊
+  static async updateProjectCaller(projectId: string, callerInfo: Array<{
+    dn: string;
+    type: string;
+    devices: Array<{
+      dn: string;
+      device_id: string;
+      user_agent: string;
+    }>;
+    participants: Array<unknown>;
+  }>): Promise<void> {
+    try {
+      const projectKey = `${this.PROJECT_PREFIX}${projectId}`;
+      await redisClient.hSet(projectKey, {
+        caller: JSON.stringify(callerInfo),
+        agentQuantity: callerInfo.length.toString(),
+        updatedAt: new Date().toISOString()
+      });
+      
+      logWithTimestamp(`專案 ${projectId} Caller 資訊已更新`);
+    } catch (error) {
+      errorWithTimestamp('更新專案 Caller 資訊失敗:', error);
+      throw error;
+    }
+  }
+
+  // 更新專案的當前撥打記錄
+  static async updateProjectLatestCallRecord(projectId: string, latestCallRecord: CurrentCallRecord): Promise<void> {
+    try {
+      const projectKey = `${this.PROJECT_PREFIX}${projectId}`;
+      await redisClient.hSet(projectKey, {
+        latestCallRecord: JSON.stringify(latestCallRecord),
+        updatedAt: new Date().toISOString()
+      });
+      
+      logWithTimestamp(`專案 ${projectId} 當前撥打記錄已更新`);
+    } catch (error) {
+      errorWithTimestamp('更新專案當前撥打記錄失敗:', error);
+      throw error;
+    }
+  }
+
+  // 更新專案錯誤狀態
+  static async updateProjectError(projectId: string, errorMessage: string | null): Promise<void> {
+    try {
+      const projectKey = `${this.PROJECT_PREFIX}${projectId}`;
+      await redisClient.hSet(projectKey, {
+        error: errorMessage || '',
+        updatedAt: new Date().toISOString()
+      });
+      
+      if (errorMessage) {
+        logWithTimestamp(`專案 ${projectId} 錯誤狀態已更新: ${errorMessage}`);
+      } else {
+        logWithTimestamp(`專案 ${projectId} 錯誤狀態已清除`);
+      }
+    } catch (error) {
+      errorWithTimestamp('更新專案錯誤狀態失敗:', error);
       throw error;
     }
   }

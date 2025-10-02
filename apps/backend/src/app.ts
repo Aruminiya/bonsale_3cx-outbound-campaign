@@ -12,7 +12,7 @@ import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from './util/
 import Project from './class/project';
 import { initRedis, closeRedis } from './services/redis';
 import { broadcastAllProjects, broadcastError } from './components/broadcast';
-import { ProjectManager } from './services/projectManager';
+import { ProjectManager } from './class/projectManager';
 import { CallListManager } from './class/callListManager';
 
 // Load environment variables

@@ -1,5 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import { ProjectManager } from '../services/projectManager';
+import { ProjectManager } from '../class/projectManager';
 import { logWithTimestamp, errorWithTimestamp } from '../util/timestamp';
 
 /**

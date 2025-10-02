@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import { throttle, type DebouncedFunc } from 'lodash';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from '../util/timestamp';
 import { getCaller, makeCall, get3cxToken } from '../services/api/callControl'
-import { ProjectManager } from '../services/projectManager';
+import { ProjectManager } from '../class/projectManager';
 import { broadcastAllProjects } from '../components/broadcast';
 import { WebSocketManager } from './webSocketManager';
 import { TokenManager } from './tokenManager';
