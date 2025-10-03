@@ -871,7 +871,7 @@ export default class Project {
           const result = await post9000(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
           if (!result.success) {
             const errorMsg = `post9000 失敗: ${result.error?.error || '未知錯誤'}`;
-            console.log('===========errorMsg', errorMsg);
+            errorWithTimestamp(errorMsg);
             await this.handleApiError('post9000', result, false); // 不拋出錯誤，只記錄
             await this.broadcastProjectInfo(this.broadcastWsRef); // 廣播更新的專案資訊（包含錯誤）
           }
