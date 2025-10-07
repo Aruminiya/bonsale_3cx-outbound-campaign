@@ -85,6 +85,7 @@ export default class Project {
   latestCallRecord: Array<CallRecord> = []; // 保存當前撥打記錄
   agentQuantity: number | 0;
   recurrence: string | null = null; // 🆕 新增 recurrence 屬性
+  callRestriction: string[] = []; // 🆕 新增 callRestriction 屬性
   private previousCallRecord: Array<CallRecord> | null = null; // 保存前一筆撥打記錄
   private wsManager: WebSocketManager | null = null;
   private tokenManager: TokenManager;
@@ -119,7 +120,8 @@ export default class Project {
     caller: Array<Caller> | null = null,
     latestCallRecord: Array<CallRecord> = [],
     agentQuantity: number | 0,
-    recurrence: string | null = null
+    recurrence: string | null = null,
+    callRestriction: string[] = []
   ) {
     this.grant_type = 'client_credentials';
     this.client_id = client_id;
@@ -133,6 +135,7 @@ export default class Project {
     this.latestCallRecord = latestCallRecord;
     this.agentQuantity = agentQuantity;
     this.recurrence = recurrence;
+    this.callRestriction = callRestriction;
 
     // 初始化 TokenManager
     this.tokenManager = new TokenManager(client_id, client_secret, projectId, access_token);
@@ -155,8 +158,9 @@ export default class Project {
     client_id: string;
     client_secret: string;
     recurrence: string | null;
+    callRestriction: string[];
   }): Promise<Project> {
-    const { projectId, callFlowId, client_id, client_secret, recurrence } = projectData;
+    const { projectId, callFlowId, client_id, client_secret, recurrence, callRestriction } = projectData;
 
     try {
       // 檢查專案是否已存在
@@ -208,7 +212,8 @@ export default class Project {
         callerData,
         [],
         agentQuantity,
-        recurrence
+        recurrence,
+        callRestriction
       );
 
       // 儲存專案到 Redis

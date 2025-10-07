@@ -248,7 +248,6 @@ export default function Home() {
   // 開始撥打電話
   const handleStartOutbound = (project: ProjectOutboundDataType) => {
     // 如果已經在 loading 中，直接返回
-    console.log('handleStartOutbound', project);
     if (startOutboundLoading.has(project.projectId)) {
       return;
     }
@@ -265,6 +264,7 @@ export default function Home() {
           client_secret: project.appSecret || '',
           projectId: project.projectId || '',
           recurrence: project.recurrence || null, // 確保不是 undefined
+          callRestriction: project.callRestriction || []
         }
       }
     }

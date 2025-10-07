@@ -20,6 +20,8 @@ export interface StartOutboundMessage extends ClientToServerMessage {
       client_secret: string;
       state: 'active' | 'stop';
       error: string | null;
+      recurrence?: string | null;
+      callRestriction?: string[];
     };
   };
 }

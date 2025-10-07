@@ -38,6 +38,7 @@ export class ProjectManager {
         latestCallRecord: project.latestCallRecord ? JSON.stringify(project.latestCallRecord) : '',
         agentQuantity: project.agentQuantity?.toString() || '0',
         recurrence: project.recurrence || '',
+        callRestriction: project.callRestriction ? JSON.stringify(project.callRestriction) : JSON.stringify([]),
         // ws_3cx 不儲存，因為 WebSocket 無法序列化
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -81,7 +82,8 @@ export class ProjectManager {
         projectData.caller ? JSON.parse(projectData.caller) : null,
         projectData.latestCallRecord =  projectData.latestCallRecord ? JSON.parse(projectData.latestCallRecord) : [],
         parseInt(projectData.agentQuantity) || 0,
-        projectData.recurrence || null
+        projectData.recurrence || null,
+        projectData.callRestriction ? JSON.parse(projectData.callRestriction) : []
       );
 
       return project;

@@ -117,7 +117,8 @@ async function recoverActiveProjects(): Promise<void> {
               callFlowId: savedProject.callFlowId,
               client_id: savedProject.client_id,
               client_secret: savedProject.client_secret || '', // 如果沒有 client_secret，使用空字串
-              recurrence: savedProject.recurrence
+              recurrence: savedProject.recurrence,
+              callRestriction: savedProject.callRestriction || []
             });
             
             // 將專案實例保存到活躍專案映射中
@@ -214,6 +215,7 @@ mainWebSocketServer.on('connection', async (wsClient) => {
           break;
         case 'startOutbound':
           // 使用 Project 類的靜態方法初始化專案
+          console.log('Received startOutbound event with payload:', payload);
           const projectInstance = await Project.initOutboundProject(payload.project);
           // 將活躍的專案實例保存到Map中（這樣才能正確停止WebSocket連接）
           activeProjects.set(payload.project.projectId, projectInstance);

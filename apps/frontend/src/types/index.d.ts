@@ -9,6 +9,7 @@ declare global {
     endDate: Date;
     extension: string
     recurrence: string | null
+    callRestriction: string[]
     isEnable: boolean
   }
   interface ProjectCustomersDesc {
@@ -230,6 +231,14 @@ declare global {
       nextCallAfter: string | null;
       callStatus: number;
     }[];
+    callRestriction: {
+      id: string;
+      projectAutoDialId: string;
+      startTime: string;
+      stopTime: string;
+      createdAt: string;
+      createdUserId: string;
+    }[]
   }
   interface Customer {
     id: string;
