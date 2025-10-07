@@ -305,7 +305,7 @@ export class CallListManager {
    * @param projectId 專案 ID
    * @returns Promise<boolean> 是否清空成功
    */
-  static async clearProjectCallList(projectId: string): Promise<boolean> {
+  static async removeProjectCallList(projectId: string): Promise<boolean> {
     try {
       const callListKey = this.getCallListKey(projectId);
       
@@ -332,6 +332,66 @@ export class CallListManager {
     } catch (error) {
       errorWithTimestamp(`❌ 清空專案 ${projectId} 撥號名單時發生錯誤:`, error);
       return false;
+    }
+  }
+
+  /**
+   * 清空所有專案的撥號名單
+   * @returns Promise<{success: boolean, clearedProjects: number, totalRecords: number}> 清空結果統計
+   */
+  static async clearAllProjectCallList(): Promise<{success: boolean, clearedProjects: number, totalRecords: number}> {
+    try {
+      // 使用 SCAN 命令尋找所有撥號名單 key
+      const pattern = `${this.CALL_LIST_PREFIX}*`;
+      const keys: string[] = [];
+      let cursor = '0';
+      
+      do {
+        const result = await redisClient.scan(cursor, {
+          MATCH: pattern,
+          COUNT: 100
+        });
+        cursor = result.cursor.toString();
+        keys.push(...result.keys);
+      } while (cursor !== '0');
+      
+      if (keys.length === 0) {
+        logWithTimestamp(`📭 沒有找到任何撥號名單需要清空`);
+        return { success: true, clearedProjects: 0, totalRecords: 0 };
+      }
+      
+      // 統計清空前的總記錄數
+      let totalRecords = 0;
+      for (const key of keys) {
+        const count = await redisClient.hLen(key);
+        totalRecords += count;
+      }
+      
+      // 使用 pipeline 批量刪除所有撥號名單 key
+      const pipeline = redisClient.multi();
+      keys.forEach(key => {
+        pipeline.del(key);
+      });
+      
+      const results = await pipeline.exec();
+      
+      // 檢查執行結果
+      const successCount = results?.filter(result => {
+        if (!result || !Array.isArray(result)) return false;
+        return result[1] === 1;
+      }).length || 0;
+      const isSuccess = successCount === keys.length;
+      
+      if (isSuccess) {
+        logWithTimestamp(`🗑️ 已清空所有專案的撥號名單 (共 ${keys.length} 個專案，${totalRecords} 筆記錄)`);
+        return { success: true, clearedProjects: keys.length, totalRecords };
+      } else {
+        errorWithTimestamp(`❌ 部分專案撥號名單清空失敗 (成功: ${successCount}/${keys.length})`);
+        return { success: false, clearedProjects: successCount, totalRecords };
+      }
+    } catch (error) {
+      errorWithTimestamp(`❌ 清空所有專案撥號名單時發生錯誤:`, error);
+      return { success: false, clearedProjects: 0, totalRecords: 0 };
     }
   }
 }

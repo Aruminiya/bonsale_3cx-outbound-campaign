@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    container_name: bonsale_3cx-outbound-campaign_backend
+    ports:
+      - "4020:4020"
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    networks:
+      - bonsale-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    container_name: bonsale_3cx-outbound-campaign_frontend
+    ports:
+      - "4030:80"
+    depends_on:
+      - backend
+    networks:
+      - bonsale-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: bonsale_3cx-outbound-campaign_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - bonsale-network
+    restart: unless-stopped
+
+    # Redis GUI 管理工具
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: bonsale_redis_commander
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    depends_on:
+      - redis
+    networks:
+      - bonsale-network
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+
+networks:
+  bonsale-network:
+    driver: bridge

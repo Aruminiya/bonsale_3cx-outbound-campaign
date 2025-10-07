@@ -10,15 +10,15 @@ client.on('error', (err) => {
 });
 
 client.on('connect', () => {
-  logWithTimestamp('🔗 Redis Client 連接成功');
+  logWithTimestamp({ isForce: true }, '🔗 Redis Client 連接成功');
 });
 
 client.on('ready', () => {
-  logWithTimestamp('✅ Redis Client 已準備就緒');
+  logWithTimestamp({ isForce: true }, '✅ Redis Client 已準備就緒');
 });
 
 client.on('end', () => {
-  logWithTimestamp('❌ Redis Client 連接已斷開');
+  logWithTimestamp({ isForce: true }, '❌ Redis Client 連接已斷開');
 });
 
 // 初始化 Redis 連接

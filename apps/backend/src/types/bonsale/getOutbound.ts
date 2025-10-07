@@ -159,6 +159,8 @@ type Customer = {
   id: string;
   memberName: string;
   phone: string;
+  description: string;
+  description2: string;
 }
 
 type VisitRecord = {
