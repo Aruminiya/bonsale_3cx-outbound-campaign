@@ -1,4 +1,13 @@
 declare global {
+  interface CallRestriction {
+    id: string;
+    projectAutoDialId: string;
+    startTime: string;
+    stopTime: string;
+    createdAt: string;
+    createdUserId: string;
+  }
+
   interface ProjectOutboundDataType {
     appId: string
     appSecret: string
@@ -9,7 +18,7 @@ declare global {
     endDate: Date;
     extension: string
     recurrence: string | null
-    callRestriction: string[]
+    callRestriction: CallRestriction[]
     isEnable: boolean
   }
   interface ProjectCustomersDesc {

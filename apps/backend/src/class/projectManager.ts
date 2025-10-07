@@ -2,6 +2,16 @@ import redisClient from '../services/redis';
 import Project from './project';
 import { logWithTimestamp, errorWithTimestamp } from '../util/timestamp';
 
+// 定義 CallRestriction 型別
+type CallRestriction = {
+  id: string;
+  projectAutoDialId: string;
+  startTime: string;
+  stopTime: string;
+  createdAt: string;
+  createdUserId: string;
+};
+
 // 定義當前撥打記錄的類型
 type CurrentCallRecord = Array<{
   customerId: string;
@@ -83,7 +93,7 @@ export class ProjectManager {
         projectData.latestCallRecord =  projectData.latestCallRecord ? JSON.parse(projectData.latestCallRecord) : [],
         parseInt(projectData.agentQuantity) || 0,
         projectData.recurrence || null,
-        projectData.callRestriction ? JSON.parse(projectData.callRestriction) : []
+        projectData.callRestriction ? JSON.parse(projectData.callRestriction) : [] as CallRestriction[]
       );
 
       return project;

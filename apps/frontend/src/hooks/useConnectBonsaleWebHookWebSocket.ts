@@ -63,6 +63,7 @@ export default function useConnectBonsaleWebHookWebSocket({ setProjectOutboundDa
                   endDate: newAutoDialData.projectInfo?.endDate || new Date(),
                   extension: newAutoDialData.callFlow?.phone || '',
                   recurrence: null, // 根據需要設定
+                  callRestriction: [], // 預設空陣列
                   isEnable: newAutoDialData.projectInfo?.isEnable ?? true,
                 };
                 

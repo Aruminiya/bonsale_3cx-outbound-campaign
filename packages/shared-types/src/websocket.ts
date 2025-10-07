@@ -10,6 +10,15 @@ export interface ClientToServerMessage {
 }
 
 // 具體的事件類型
+export interface CallRestriction {
+  id: string;
+  projectAutoDialId: string;
+  startTime: string;
+  stopTime: string;
+  createdAt: string;
+  createdUserId: string;
+}
+
 export interface StartOutboundMessage extends ClientToServerMessage {
   event: 'startOutbound';
   payload: {
@@ -21,7 +30,7 @@ export interface StartOutboundMessage extends ClientToServerMessage {
       state: 'active' | 'stop';
       error: string | null;
       recurrence?: string | null;
-      callRestriction?: string[];
+      callRestriction?: CallRestriction[];
     };
   };
 }
