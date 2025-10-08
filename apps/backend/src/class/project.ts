@@ -831,6 +831,7 @@ export default class Project {
         agentQuantity: this.agentQuantity,
         access_token: this.access_token ? '***已設置***' : '未設置',
         recurrence: this.recurrence,
+        callRestriction: this.callRestriction,
         error: this.error,
         wsConnected: this.wsManager?.isConnected() || false,
         timestamp: new Date().toISOString(),
