@@ -12,6 +12,7 @@ import { getOutbound, updateCallStatus, updateDialUpdate, updateVisitRecord, upd
 import { getUsers } from '../services/api/xApi';
 import { Outbound } from '../types/bonsale/getOutbound';
 import { post9000Dummy, post9000 } from '../services/api/insertOverdueMessageForAi';
+import { isTodayInSchedule } from '../util/iCalendar';
 
 dotenv.config();
 
@@ -600,6 +601,34 @@ export default class Project {
     if (!this.caller || this.caller.length === 0) {
       errorWithTimestamp('當前專案沒有分機');
       return;
+    }
+
+    // 檢查是否有 recurrence 排程
+    if (this.recurrence) {
+      const isInSchedule = isTodayInSchedule(this.recurrence);
+      if (!isInSchedule) {
+        logWithTimestamp(`今天不在 recurrence 排程內，跳過外撥`);
+        return;
+      }
+    }
+
+    // 檢查是否有 callRestriction 限制撥打時間
+    if (this.callRestriction && this.callRestriction.length > 0) {
+      const now = new Date();
+      // 將時間轉換為 UTC+8 (台北時間)
+      now.setHours(now.getUTCHours() + 8);
+
+      // 檢查當前時間是否在任何一個限制時間範圍內
+      const isInRestrictedTime = this.callRestriction.some(restriction => {
+        const startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(restriction.startTime.split(':')[0]), Number(restriction.startTime.split(':')[1]));
+        const stopTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(restriction.stopTime.split(':')[0]), Number(restriction.stopTime.split(':')[1]));
+        return now >= startTime && now <= stopTime;
+      })
+
+      if (isInRestrictedTime) {
+        logWithTimestamp({ isForce: true },`當前時間在限制撥打時間內，跳過外撥`);
+        return;
+      }
     }
 
     // 遍歷所有分機進行外撥 (使用 for 循環確保順序執行)
