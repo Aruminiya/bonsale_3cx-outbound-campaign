@@ -394,6 +394,8 @@ declare global {
       }>;
     }>;
     latestCallRecord: CallRecord[] | null;
+    info: string | null;
+    warning: string | null;
     error: string | null;
     access_token: string;
     createdAt: string;

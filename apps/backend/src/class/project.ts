@@ -71,17 +71,6 @@ type Caller = {
   participants: Array<Participants>;
 }
 
-// TODO: 指定時間才能撥打  需要再跟 perter 和 victor 討論能不能加開欄位 讓我有時間可選限制
-/*
-  因為目前的限制時間 是 
-
-  指定檔期：從 A 日期時間開始 到 B 日期時間結束 固定的某些日期 才能打電話
-
-  但這還不夠
-
-  還需要 限制 滿足在檔期的內時間 不可撥打的時間區段
-*/
-
 export default class Project {
   grant_type: string;
   client_id: string;
@@ -89,7 +78,9 @@ export default class Project {
   callFlowId: string;
   projectId: string;
   state: 'active' | 'stop';
-  error: string | null;
+  info: string | null = null;
+  warning: string | null = null;
+  error: string | null = null;
   access_token: string | null;
   caller: Array<Caller> | null;
   latestCallRecord: Array<CallRecord> = []; // 保存當前撥打記錄
@@ -125,6 +116,8 @@ export default class Project {
     callFlowId: string,
     projectId: string,
     state:  'active' | 'stop',
+    info: string | null = null,
+    warning: string | null = null,
     error: string | null = null,
     access_token: string | null = null,
     caller: Array<Caller> | null = null,
@@ -139,6 +132,8 @@ export default class Project {
     this.callFlowId = callFlowId;
     this.projectId = projectId;
     this.state = state;
+    this.info = info;
+    this.warning = warning;
     this.error = error;
     this.access_token = access_token;
     this.caller = caller;
@@ -217,6 +212,8 @@ export default class Project {
         callFlowId,
         projectId,
         'active',
+        null,
+        null,
         null,
         access_token,
         callerData,
@@ -327,6 +324,123 @@ export default class Project {
   }
 
   /**
+   * 設定專案資訊
+   * @param infoMessage 資訊訊息
+   */
+  async setInfo(infoMessage: string): Promise<void> {
+    this.info = infoMessage;
+    logWithTimestamp(`專案 ${this.projectId} 資訊: ${infoMessage}`);
+    
+    try {
+      // 同步更新到 Redis
+      await ProjectManager.updateProjectInfo(this.projectId, infoMessage);
+      
+      // 廣播資訊給客戶端
+      if (this.broadcastWsRef) {
+        try {
+          await broadcastAllProjects(this.broadcastWsRef, this.projectId);
+          logWithTimestamp(`資訊已廣播給客戶端 - 專案: ${this.projectId}`);
+        } catch (broadcastError) {
+          errorWithTimestamp(`廣播資訊訊息失敗:`, broadcastError);
+        }
+      }
+    } catch (error: unknown) {
+      errorWithTimestamp(`更新專案資訊到 Redis 失敗:`, error);
+    }
+  }
+
+  /**
+   * 清除專案資訊
+   */
+  async clearInfo(): Promise<void> {
+    if (this.info) {
+      logWithTimestamp(`專案 ${this.projectId} 資訊已清除`);
+      this.info = null;
+      
+      try {
+        // 同步更新到 Redis
+        await ProjectManager.updateProjectInfo(this.projectId, null);
+        
+        // 廣播資訊清除給客戶端
+        if (this.broadcastWsRef) {
+          try {
+            await broadcastAllProjects(this.broadcastWsRef, this.projectId);
+            logWithTimestamp(`資訊清除已廣播給客戶端 - 專案: ${this.projectId}`);
+          } catch (broadcastError) {
+            errorWithTimestamp(`廣播資訊清除訊息失敗:`, broadcastError);
+          }
+        }
+      } catch (error: unknown) {
+        errorWithTimestamp(`清除專案資訊到 Redis 失敗:`, error);
+      }
+    }
+  }
+
+  /**
+   * 設定專案警告
+   * @param warningMessage 警告訊息
+   */
+  async setWarning(warningMessage: string): Promise<void> {
+    this.warning = warningMessage;
+    logWithTimestamp(`專案 ${this.projectId} 警告: ${warningMessage}`);
+
+    try {
+      // 同步更新到 Redis
+      await ProjectManager.updateProjectWarning(this.projectId, warningMessage);
+      
+      // 廣播警告給客戶端
+      if (this.broadcastWsRef) {
+        try {
+          await broadcastAllProjects(this.broadcastWsRef, this.projectId);
+          logWithTimestamp(`警告已廣播給客戶端 - 專案: ${this.projectId}`);
+        } catch (broadcastError) {
+          errorWithTimestamp(`廣播警告訊息失敗:`, broadcastError);
+        }
+      }
+    } catch (error: unknown) {
+      errorWithTimestamp(`更新專案警告到 Redis 失敗:`, error);
+    }
+  }
+
+  /**
+   * 清除專案警告
+   */
+  async clearWarning(): Promise<void> {
+    if (this.warning) {
+      logWithTimestamp(`專案 ${this.projectId} 警告已清除`);
+      this.warning = null;
+      
+      try {
+        // 同步更新到 Redis
+        await ProjectManager.updateProjectWarning(this.projectId, null);
+        
+        // 廣播警告清除給客戶端
+        if (this.broadcastWsRef) {
+          try {
+            await broadcastAllProjects(this.broadcastWsRef, this.projectId);
+            logWithTimestamp(`警告清除已廣播給客戶端 - 專案: ${this.projectId}`);
+          } catch (broadcastError) {
+            errorWithTimestamp(`廣播警告清除訊息失敗:`, broadcastError);
+          }
+        }
+      } catch (error: unknown) {
+        errorWithTimestamp(`清除專案警告到 Redis 失敗:`, error);
+      }
+    }
+  }
+
+  /**
+   * 清除專案錯誤 警告 資訊
+   */
+  async clearErrorWarningInfo(): Promise<void> {
+    await Promise.all([
+      this.clearError(),
+      this.clearWarning(),
+      this.clearInfo()
+    ]);
+  }
+
+  /**
    * 建立 3CX WebSocket 連接
    * @param broadcastWs 廣播 WebSocket 伺服器實例
    * @returns Promise<void>
@@ -431,8 +545,8 @@ export default class Project {
    */
   private async outboundCall(broadcastWs?: WebSocketServer, isExecuteOutboundCalls: boolean = true): Promise<void> {
     try {
-      // 清除之前的錯誤（如果有的話）
-      await this.clearError();
+      // 清除之前的資訊提示（如果有的話）
+      await this.clearErrorWarningInfo();
       
       // 步驟一: 檢查專案狀態
       if (this.state !== 'active') {
@@ -480,9 +594,6 @@ export default class Project {
       // 步驟六: 執行外撥邏輯
       if (isExecuteOutboundCalls) {
         await this.executeOutboundCalls();
-
-        // 如果執行到這裡表示外撥流程成功完成，確保錯誤狀態被清除
-        await this.clearError();
       }
 
     } catch (error) {
@@ -607,7 +718,8 @@ export default class Project {
     if (this.recurrence) {
       const isInSchedule = isTodayInSchedule(this.recurrence);
       if (!isInSchedule) {
-        logWithTimestamp(`今天不在 recurrence 排程內，跳過外撥`);
+        warnWithTimestamp(`今天不在 recurrence 排程內，跳過外撥`);
+        this.setWarning('今天不在排程內，暫停外撥');
         return;
       }
     }
@@ -626,7 +738,8 @@ export default class Project {
       })
 
       if (isInRestrictedTime) {
-        logWithTimestamp({ isForce: true },`當前時間在限制撥打時間內，跳過外撥`);
+        warnWithTimestamp(`當前時間在限制撥打時間內，跳過外撥`);
+        this.setWarning('當前時間在限制撥打時間內，暫停外撥');
         return;
       }
     }

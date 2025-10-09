@@ -33,6 +33,8 @@ export async function broadcastAllProjects(
           access_token: p.access_token ? '***' : null, // 隱藏敏感資訊
           recurrence: p.recurrence || null,
           callRestriction: p.callRestriction || [],
+          info: p.info || null,
+          warning: p.warning || null,
           error: p.error || null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()

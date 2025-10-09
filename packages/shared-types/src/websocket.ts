@@ -28,7 +28,9 @@ export interface StartOutboundMessage extends ClientToServerMessage {
       client_id: string;
       client_secret: string;
       state: 'active' | 'stop';
-      error: string | null;
+      info?: string | null;
+      warning?: string | null;
+      error?: string | null;
       recurrence?: string | null;
       callRestriction?: CallRestriction[];
     };
@@ -66,6 +68,9 @@ export interface ProjectData {
   caller: unknown;
   access_token: string | null;
   recurrence: string | null;
+  info: string | null;
+  warning: string | null;
+  error: string | null;
   createdAt: string;
   updatedAt: string;
 }

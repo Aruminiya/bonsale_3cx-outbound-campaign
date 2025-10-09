@@ -42,6 +42,8 @@ export class ProjectManager {
         callFlowId: project.callFlowId,
         projectId: project.projectId,
         state: project.state,
+        info: project.info || '',
+        warning: project.warning || '',
         error: project.error || '',
         access_token: project.access_token || '',
         caller: project.caller ? JSON.stringify(project.caller) : '',
@@ -87,6 +89,8 @@ export class ProjectManager {
         projectData.callFlowId,
         projectData.projectId,
         projectData.state as 'active' | 'stop',
+        projectData.info || null,
+        projectData.warning || null,
         projectData.error || null,
         projectData.access_token || null,
         projectData.caller ? JSON.parse(projectData.caller) : null,
@@ -234,6 +238,46 @@ export class ProjectManager {
       }
     } catch (error) {
       errorWithTimestamp('更新專案錯誤狀態失敗:', error);
+      throw error;
+    }
+  }
+
+  // 更新專案資訊狀態
+  static async updateProjectInfo(projectId: string, infoMessage: string | null): Promise<void> {
+    try {
+      const projectKey = `${this.PROJECT_PREFIX}${projectId}`;
+      await redisClient.hSet(projectKey, {
+        info: infoMessage || '',
+        updatedAt: new Date().toISOString()
+      });
+      
+      if (infoMessage) {
+        logWithTimestamp(`專案 ${projectId} 資訊狀態已更新: ${infoMessage}`);
+      } else {
+        logWithTimestamp(`專案 ${projectId} 資訊狀態已清除`);
+      }
+    } catch (error) {
+      errorWithTimestamp('更新專案資訊狀態失敗:', error);
+      throw error;
+    }
+  }
+
+  // 更新專案警告狀態
+  static async updateProjectWarning(projectId: string, warningMessage: string | null): Promise<void> {
+    try {
+      const projectKey = `${this.PROJECT_PREFIX}${projectId}`;
+      await redisClient.hSet(projectKey, {
+        warning: warningMessage || '',
+        updatedAt: new Date().toISOString()
+      });
+      
+      if (warningMessage) {
+        logWithTimestamp(`專案 ${projectId} 警告狀態已更新: ${warningMessage}`);
+      } else {
+        logWithTimestamp(`專案 ${projectId} 警告狀態已清除`);
+      }
+    } catch (error) {
+      errorWithTimestamp('更新專案警告狀態失敗:', error);
       throw error;
     }
   }

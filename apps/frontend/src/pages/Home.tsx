@@ -783,6 +783,46 @@ export default function Home() {
                               />
                             )}
                           </Stack>
+                          {/* 專案資訊顯示 */}
+                          {projectWsData && projectWsData.info && (
+                            <Box 
+                              sx={{ 
+                                marginTop: '12px'
+                              }}
+                            >
+                              <Alert 
+                                severity="info" 
+                                sx={{ 
+                                  fontSize: '0.8rem',
+                                  '& .MuiAlert-message': {
+                                    wordBreak: 'break-word'
+                                  }
+                                }}
+                              >
+                                <strong>專案資訊：</strong>{projectWsData.info}
+                              </Alert>
+                            </Box>
+                          )}
+                          {/* 專案警告顯示 */}
+                          {projectWsData && projectWsData.warning && (
+                            <Box 
+                              sx={{ 
+                                marginTop: '12px'
+                              }}
+                            >
+                              <Alert 
+                                severity="warning" 
+                                sx={{ 
+                                  fontSize: '0.8rem',
+                                  '& .MuiAlert-message': {
+                                    wordBreak: 'break-word'
+                                  }
+                                }}
+                              >
+                                <strong>專案警告：</strong>{projectWsData.warning}
+                              </Alert>
+                            </Box>
+                          )}
                           {/* 專案錯誤顯示 */}
                           {projectWsData && projectWsData.error && (
                             <Box 
