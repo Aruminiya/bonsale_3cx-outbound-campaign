@@ -1,4 +1,5 @@
-const { rrulestr } = require('rrule');
+import { rrulestr } from 'rrule';
+import { logWithTimestamp } from './timestamp';
 
 function iCalendarUtc8ToUtc(iCalendar: string): string {
   /**
@@ -46,10 +47,10 @@ export function isTodayInSchedule(rruleString: string): boolean {
   const occurrences = rule.between(todayUTC, tomorrowUTC, true);
 
   if (occurrences.length > 0) {
-    console.log('今天有符合的事件:', occurrences);
+    logWithTimestamp('今天有符合的事件:', occurrences);
     return true;
   } else {
-    console.log('今天沒有符合的事件');
+    logWithTimestamp('今天沒有符合的事件');
     return false;
   }
 }
