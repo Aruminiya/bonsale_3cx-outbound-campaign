@@ -1,6 +1,6 @@
 import { WebSocketServer } from "ws";
 import dotenv from 'dotenv';
-import { throttle, type DebouncedFunc } from 'lodash';
+import { throttle, debounce, type DebouncedFunc } from 'lodash';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from '../util/timestamp';
 import { getCaller, makeCall, get3cxToken } from '../services/api/callControl'
 import { ProjectManager } from '../class/projectManager';
@@ -91,6 +91,8 @@ export default class Project {
   private wsManager: WebSocketManager | null = null;
   private tokenManager: TokenManager;
   private throttledMessageHandler: DebouncedFunc<(broadcastWs: WebSocketServer, data: Buffer) => Promise<void>> | null = null;
+  // 🆕 為 outboundCall 方法添加 debounce
+  private debouncedOutboundCall: DebouncedFunc<(broadcastWs?: WebSocketServer, isExecuteOutboundCalls?: boolean) => Promise<void>> | null = null;
   private idleCheckTimer: NodeJS.Timeout | null = null; // 空閒檢查定時器
   private idleCheckInterval: number = 30000; // 當前檢查間隔（毫秒）
   private readonly minIdleCheckInterval: number = 30000; // 最小檢查間隔 30 秒
@@ -149,6 +151,12 @@ export default class Project {
     this.throttledMessageHandler = throttle(this.processWebSocketMessage.bind(this), 1000, {
       leading: false,  // 第一次不立即執行
       trailing: true // 在等待期結束後執行
+    });
+
+    // 🆕 初始化 debounced outboundCall 方法 (100ms 內最多執行一次)
+    this.debouncedOutboundCall = debounce(this.outboundCall.bind(this), 100, {
+      leading: false,   // 第一次不立即執行
+      trailing: true  // 在等待期結束後執行
     });
   }
 
@@ -513,7 +521,10 @@ export default class Project {
       switch (messageObject.event.event_type) {
         case 0:
           logWithTimestamp(`狀態 ${messageObject.event.event_type}:`, messageObject.event);
-          await this.outboundCall(broadcastWs, false);
+          // 🆕 使用 debounced 版本
+          if (this.debouncedOutboundCall) {
+            await this.debouncedOutboundCall(broadcastWs, false);
+          }
           break;
         case 1:
           logWithTimestamp(`狀態 ${messageObject.event.event_type}:`, messageObject.event);
@@ -522,8 +533,10 @@ export default class Project {
           if (this.state === 'stop') {
             await this.handleStopStateLogic(broadcastWs);
           } else {
-            // 最後執行外撥邏輯
-            await this.outboundCall(broadcastWs);
+            // 🆕 使用 debounced 版本
+            if (this.debouncedOutboundCall) {
+              await this.debouncedOutboundCall(broadcastWs);
+            }
           }
           break; 
         default:
@@ -1312,7 +1325,10 @@ export default class Project {
       
       // 執行外撥邏輯
       logWithTimestamp(`📞 執行外撥邏輯 - 專案: ${this.projectId}`);
-      await this.outboundCall(broadcastWs);
+      // 🆕 使用 debounced 版本
+      if (this.debouncedOutboundCall) {
+        await this.debouncedOutboundCall(broadcastWs);
+      }
       
       // 啟動空閒檢查定時器
       this.startIdleCheck(broadcastWs);
@@ -1358,7 +1374,7 @@ export default class Project {
           this.handleWebSocketInitialization(broadcastWs, '3CX WebSocket 連接成功')
         },
         onMessage: (data: Buffer) => {
-          logWithTimestamp({ isForce: true }, '📨 3CX WebSocket 收到訊息:', {
+          logWithTimestamp( '📨 3CX WebSocket 收到訊息:', {
             projectId: this.projectId,
             callFlowId: this.callFlowId,
             state: this.state,
@@ -1498,7 +1514,10 @@ export default class Project {
       
       setTimeout(async () => {
         logWithTimestamp(`🔄 延遲後觸發外撥邏輯 - 專案: ${this.projectId}`);
-        await this.outboundCall(this.broadcastWsRef);
+        // 🆕 使用 debounced 版本
+        if (this.debouncedOutboundCall) {
+          await this.debouncedOutboundCall(this.broadcastWsRef);
+        }
       }, randomDelay);
       
       return true;
