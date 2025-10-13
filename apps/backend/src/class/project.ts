@@ -7,7 +7,7 @@ import { ProjectManager } from '../class/projectManager';
 import { broadcastAllProjects } from '../components/broadcast';
 import { WebSocketManager } from './webSocketManager';
 import { TokenManager } from './tokenManager';
-import { CallListManager } from './callListManager';
+import { CallListManager } from './callListManager'; 
 import { getOutbound, updateCallStatus, updateDialUpdate, updateVisitRecord, updateBonsaleProjectAutoDialExecute } from '../services/api/bonsale';
 import { getUsers } from '../services/api/xApi';
 import { Outbound } from '../types/bonsale/getOutbound';
@@ -99,6 +99,10 @@ export default class Project {
   private readonly maxIdleCheckInterval: number = 300000; // 最大檢查間隔 5 分鐘
   private readonly idleCheckBackoffFactor: number = 1.5; // 指數退避倍數
   private broadcastWsRef: WebSocketServer | undefined = undefined; // 保存 WebSocket 引用
+
+  // 🆕 臨界區段保護機制
+  private extensionMutex: Map<string, boolean> = new Map(); // 分機級別互斥鎖
+  private extensionLockTimers: Map<string, NodeJS.Timeout> = new Map(); // 鎖定計時器
 
   /**
    * Project 類別構造函數
@@ -782,6 +786,13 @@ export default class Project {
         
         // 代理人可用，執行外撥邏輯
         await this.processCallerOutbound(caller);
+        
+        // 🆕 在處理下一個分機前添加延遲，給 API 和 WebSocket 一些反應時間
+        const currentIndex = this.caller.indexOf(caller);
+        if (currentIndex < this.caller.length - 1) {
+          logWithTimestamp(`⏳ 處理完分機 ${caller.dn}，等待 500ms 後處理下一個分機`);
+          await this.delay(500); // 500ms 延遲
+        }
       } catch (error) {
         errorWithTimestamp(`處理分機 ${caller.dn} 外撥時發生錯誤:`, error);
         // 繼續處理下一個分機，不中斷整個流程
@@ -804,7 +815,31 @@ export default class Project {
       }
 
       const { dn, device_id } = caller.devices[0];
-      const { participants } = caller;
+
+      // 🚨 臨界區段保護：獲取分機處理鎖
+      if (!this.acquireExtensionLock(dn)) {
+        return; // 無法獲取鎖，跳過處理
+      }
+
+      try {
+        // 🆕 每次處理前都獲取最新的分機狀態（防止使用過時資料）
+        logWithTimestamp(`🔄 獲取分機 ${dn} 的最新狀態`);
+        const newCallerResult = await getCaller(this.access_token!);
+        
+        if (!newCallerResult.success) {
+          warnWithTimestamp(`❌ 無法獲取分機 ${dn} 的最新狀態，跳過處理`);
+          return;
+        }
+        
+        // 找到對應的分機資訊
+        const currentCallerInfo = newCallerResult.data.find((c: Caller) => c.dn === dn);
+        if (!currentCallerInfo) {
+          warnWithTimestamp(`❌ 找不到分機 ${dn} 的資訊，跳過處理`);
+          return;
+        }
+        
+        const { participants } = currentCallerInfo;
+        logWithTimestamp(`📞 分機 ${dn} 當前狀態 - 通話數: ${participants?.length || 0}`);
 
       // 檢查分機是否空閒
       if (!participants || participants.length === 0) {
@@ -907,13 +942,33 @@ export default class Project {
           // 即使沒有撥號名單，也要呼叫 makeOutboundCall 來處理前一通電話的結果
           await this.makeOutboundCall(dn, device_id, null, 2000);
         }
-      } else {
-        warnWithTimestamp(`分機 ${dn} 已有通話中，無法撥打下一通電話`);
+        } else {
+          warnWithTimestamp(`分機 ${dn} 已有通話中（${participants.length} 通），無法撥打下一通電話`);
+          
+          // 🆕 詳細記錄當前通話狀態（用於調試）
+          participants.forEach((participant: Participants, index: number) => {
+            logWithTimestamp(`  通話 ${index + 1}: ${participant.status} - ${participant.party_caller_id} (CallID: ${participant.callid})`);
+          });
+        }
+      } catch (processingError) {
+        const errorMsg = `處理分機 ${dn} 外撥邏輯時發生錯誤: ${processingError instanceof Error ? processingError.message : String(processingError)}`;
+        await this.setError(errorMsg);
+        errorWithTimestamp(`處理分機 ${dn} 外撥邏輯時發生錯誤:`, processingError);
+      } finally {
+        // 🚨 臨界區段結束：延遲釋放鎖（給 WebSocket 狀態更新一些時間）
+        setTimeout(() => {
+          this.releaseExtensionLock(dn);
+        }, 3000); // 3秒後釋放鎖
       }
     } catch (error) {
       const errorMsg = `處理分機 ${caller.dn} 外撥時發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
       await this.setError(errorMsg);
       errorWithTimestamp(`處理分機 ${caller.dn} 外撥時發生錯誤:`, error);
+      
+      // 🆕 外層錯誤處理也要釋放鎖
+      if (caller.devices && caller.devices.length > 0) {
+        this.releaseExtensionLock(caller.devices[0].dn);
+      }
     }
   }
 
@@ -1411,6 +1466,64 @@ export default class Project {
    */
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * 獲取分機處理鎖（防止臨界區段競爭）
+   * @param dn 分機號碼
+   * @returns boolean - true 如果成功獲取鎖，false 如果已被鎖定
+   * @private
+   */
+  private acquireExtensionLock(dn: string): boolean {
+    if (this.extensionMutex.get(dn)) {
+      logWithTimestamp(`⚠️  分機 ${dn} 已被鎖定，跳過重複處理`);
+      return false; // 已被鎖定
+    }
+    
+    this.extensionMutex.set(dn, true);
+    logWithTimestamp(`🔒 獲取分機 ${dn} 處理鎖`);
+    
+    // 設置自動釋放鎖的計時器（防止死鎖）
+    const timer = setTimeout(() => {
+      this.forceReleaseExtensionLock(dn);
+    }, 10000); // 10秒後強制釋放
+    
+    this.extensionLockTimers.set(dn, timer);
+    return true;
+  }
+
+  /**
+   * 釋放分機處理鎖
+   * @param dn 分機號碼
+   * @private
+   */
+  private releaseExtensionLock(dn: string): void {
+    if (this.extensionMutex.get(dn)) {
+      this.extensionMutex.set(dn, false);
+      logWithTimestamp(`🔓 釋放分機 ${dn} 處理鎖`);
+      
+      // 清除計時器
+      const timer = this.extensionLockTimers.get(dn);
+      if (timer) {
+        clearTimeout(timer);
+        this.extensionLockTimers.delete(dn);
+      }
+    }
+  }
+
+  /**
+   * 強制釋放分機處理鎖（防止死鎖）
+   * @param dn 分機號碼
+   * @private
+   */
+  private forceReleaseExtensionLock(dn: string): void {
+    if (this.extensionMutex.get(dn)) {
+      this.extensionMutex.set(dn, false);
+      logWithTimestamp(`⚡ 強制釋放分機 ${dn} 處理鎖（防止死鎖）`);
+      
+      // 清除計時器
+      this.extensionLockTimers.delete(dn);
+    }
   }
 
   /**
