@@ -133,7 +133,7 @@ async function updateVisitRecord(
       description,
       visitedResult,
     };
-    const response = await axios.post(`${host}/project/customer/visit`, payload);
+    const response = await axiosBonsaleInstance.post(`${host}/project/customer/visit`, payload);
     return { success: true, data: response.data }; // 返回成功
   } catch (error: unknown) {
     const axiosError = error as AxiosError;
