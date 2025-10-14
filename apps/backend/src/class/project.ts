@@ -841,107 +841,107 @@ export default class Project {
         const { participants } = currentCallerInfo;
         logWithTimestamp(`📞 分機 ${dn} 當前狀態 - 通話數: ${participants?.length || 0}`);
 
-      // 檢查分機是否空閒
-      if (!participants || participants.length === 0) {
-        logWithTimestamp(`分機 ${dn} 空閒，可以撥打電話`);
-        
-        // 從 Redis 獲取下一個要撥打的電話號碼
-        const nextCallItem = await CallListManager.getNextCallItem(this.projectId);
-
-        // 檢查並補充撥號名單（如果數量不足）
-        await this.checkAndReplenishCallList();
-        
-        if (nextCallItem) {
-          // 初始化陣列（如果需要）
-          if (!this.latestCallRecord) {
-            this.latestCallRecord = [];
-          }
-          if (!this.previousCallRecord) {
-            this.previousCallRecord = [];
-          }
-
-          // 檢查該分機是否已有撥打記錄
-          const existingCallIndex = this.latestCallRecord.findIndex(call => call?.dn === dn);
+        // 檢查分機是否空閒
+        if (!participants || participants.length === 0) {
+          logWithTimestamp(`分機 ${dn} 空閒，可以撥打電話`);
           
-          if (existingCallIndex >= 0) {
-            // 如果該分機已有撥打記錄，移動到 previousCallRecord
-            const existingCall = this.latestCallRecord[existingCallIndex];
-            if (existingCall) {
-              // 更新 previousCallRecord 中該分機的記錄
-              const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
-              if (prevCallIndex >= 0) {
-                this.previousCallRecord[prevCallIndex] = { ...existingCall };
-              } else {
-                this.previousCallRecord.push({ ...existingCall });
-              }
-              logWithTimestamp(`保存分機 ${dn} 的前一筆撥打記錄 - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
+          // 從 Redis 獲取下一個要撥打的電話號碼
+          const nextCallItem = await CallListManager.getNextCallItem(this.projectId);
+
+          // 檢查並補充撥號名單（如果數量不足）
+          await this.checkAndReplenishCallList();
+          
+          if (nextCallItem) {
+            // 初始化陣列（如果需要）
+            if (!this.latestCallRecord) {
+              this.latestCallRecord = [];
             }
-          }
+            if (!this.previousCallRecord) {
+              this.previousCallRecord = [];
+            }
 
-          // 創建新的撥打記錄
-          const newCallRecord: CallRecord = {
-            customerId: nextCallItem.customerId,
-            memberName: nextCallItem.memberName,
-            phone: nextCallItem.phone,
-            description: nextCallItem.description || null,
-            description2: nextCallItem.description2 || null,
-            status: "Dialing", // 初始狀態為撥號中
-            projectId: nextCallItem.projectId,
-            dn: dn,
-            dialTime: new Date().toISOString()
-          };
+            // 檢查該分機是否已有撥打記錄
+            const existingCallIndex = this.latestCallRecord.findIndex(call => call?.dn === dn);
+            
+            if (existingCallIndex >= 0) {
+              // 如果該分機已有撥打記錄，移動到 previousCallRecord
+              const existingCall = this.latestCallRecord[existingCallIndex];
+              if (existingCall) {
+                // 更新 previousCallRecord 中該分機的記錄
+                const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
+                if (prevCallIndex >= 0) {
+                  this.previousCallRecord[prevCallIndex] = { ...existingCall };
+                } else {
+                  this.previousCallRecord.push({ ...existingCall });
+                }
+                logWithTimestamp(`保存分機 ${dn} 的前一筆撥打記錄 - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
+              }
+            }
 
-          // 更新或添加當前撥打記錄
-          if (existingCallIndex >= 0) {
-            this.latestCallRecord[existingCallIndex] = newCallRecord;
+            // 創建新的撥打記錄
+            const newCallRecord: CallRecord = {
+              customerId: nextCallItem.customerId,
+              memberName: nextCallItem.memberName,
+              phone: nextCallItem.phone,
+              description: nextCallItem.description || null,
+              description2: nextCallItem.description2 || null,
+              status: "Dialing", // 初始狀態為撥號中
+              projectId: nextCallItem.projectId,
+              dn: dn,
+              dialTime: new Date().toISOString()
+            };
+
+            // 更新或添加當前撥打記錄
+            if (existingCallIndex >= 0) {
+              this.latestCallRecord[existingCallIndex] = newCallRecord;
+            } else {
+              this.latestCallRecord.push(newCallRecord);
+            }
+            
+            // 同步更新到 Redis
+            await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
+            
+            // 有撥號名單，進行撥打
+            logWithTimestamp(`準備撥打 - 客戶: ${nextCallItem.memberName} (${nextCallItem.customerId}), 電話: ${nextCallItem.phone}, 分機: ${dn}`);
+            await this.makeOutboundCall(dn, device_id, nextCallItem.phone, 2000);
           } else {
-            this.latestCallRecord.push(newCallRecord);
-          }
-          
-          // 同步更新到 Redis
-          await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
-          
-          // 有撥號名單，進行撥打
-          logWithTimestamp(`準備撥打 - 客戶: ${nextCallItem.memberName} (${nextCallItem.customerId}), 電話: ${nextCallItem.phone}, 分機: ${dn}`);
-          await this.makeOutboundCall(dn, device_id, nextCallItem.phone, 2000);
-        } else {
-          // 沒有撥號名單，但要檢查該分機是否有當前撥打記錄需要處理
-          logWithTimestamp(`專案 ${this.projectId} 的撥號名單已空，分機 ${dn} 暫無可撥打號碼`);
-          
-          // 初始化陣列（如果需要）
-          if (!this.latestCallRecord) {
-            this.latestCallRecord = [];
-          }
-          if (!this.previousCallRecord) {
-            this.previousCallRecord = [];
-          }
-
-          // 檢查該分機是否有當前撥打記錄需要移動到 previousCallRecord
-          const existingCallIndex = this.latestCallRecord.findIndex(call => call?.dn === dn);
-          if (existingCallIndex >= 0) {
-            const existingCall = this.latestCallRecord[existingCallIndex];
-            if (existingCall) {
-              // 移動到 previousCallRecord
-              const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
-              if (prevCallIndex >= 0) {
-                this.previousCallRecord[prevCallIndex] = { ...existingCall };
-              } else {
-                this.previousCallRecord.push({ ...existingCall });
-              }
-              
-              // 從 latestCallRecord 中移除
-              this.latestCallRecord.splice(existingCallIndex, 1);
-              
-              // 同步更新到 Redis
-              await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
-              
-              logWithTimestamp(`保存分機 ${dn} 的最後一筆撥打記錄到 previousCallRecord - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
+            // 沒有撥號名單，但要檢查該分機是否有當前撥打記錄需要處理
+            logWithTimestamp(`專案 ${this.projectId} 的撥號名單已空，分機 ${dn} 暫無可撥打號碼`);
+            
+            // 初始化陣列（如果需要）
+            if (!this.latestCallRecord) {
+              this.latestCallRecord = [];
             }
+            if (!this.previousCallRecord) {
+              this.previousCallRecord = [];
+            }
+
+            // 檢查該分機是否有當前撥打記錄需要移動到 previousCallRecord
+            const existingCallIndex = this.latestCallRecord.findIndex(call => call?.dn === dn);
+            if (existingCallIndex >= 0) {
+              const existingCall = this.latestCallRecord[existingCallIndex];
+              if (existingCall) {
+                // 移動到 previousCallRecord
+                const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
+                if (prevCallIndex >= 0) {
+                  this.previousCallRecord[prevCallIndex] = { ...existingCall };
+                } else {
+                  this.previousCallRecord.push({ ...existingCall });
+                }
+                
+                // 從 latestCallRecord 中移除
+                this.latestCallRecord.splice(existingCallIndex, 1);
+                
+                // 同步更新到 Redis
+                await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
+                
+                logWithTimestamp(`保存分機 ${dn} 的最後一筆撥打記錄到 previousCallRecord - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
+              }
+            }
+            
+            // 即使沒有撥號名單，也要呼叫 makeOutboundCall 來處理前一通電話的結果
+            await this.makeOutboundCall(dn, device_id, null, 2000);
           }
-          
-          // 即使沒有撥號名單，也要呼叫 makeOutboundCall 來處理前一通電話的結果
-          await this.makeOutboundCall(dn, device_id, null, 2000);
-        }
         } else {
           warnWithTimestamp(`分機 ${dn} 已有通話中（${participants.length} 通），無法撥打下一通電話`);
           
