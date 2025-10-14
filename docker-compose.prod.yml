@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   backend:
-    image: gcr.io/drvet-server-sysstore-bonvies/bonsale_3cx-outbound-campaign_backend:test
+    image: gcr.io/drvet-server-sysstore-bonvies/bonsale_3cx-outbound-campaign_backend:v0.0.1
     container_name: bonsale_3cx-outbound-campaign_backend
     ports:
       - "4020:4020"
@@ -16,11 +16,11 @@ services:
     logging:
       driver: json-file
       options:
-        max-size: "128m"
+        max-size: "256m"
         max-file: "10"
 
   frontend:
-    image: gcr.io/drvet-server-sysstore-bonvies/bonsale_3cx-outbound-campaign_frontend:test
+    image: gcr.io/drvet-server-sysstore-bonvies/bonsale_3cx-outbound-campaign_frontend:v0.0.1
     container_name: bonsale_3cx-outbound-campaign_frontend
     ports:
       - "4030:80"

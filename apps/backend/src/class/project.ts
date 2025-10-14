@@ -1102,7 +1102,15 @@ export default class Project {
             return;
           };
           const dummyResult = await post9000Dummy(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
-          await this.handleApiError('post9000Dummy', dummyResult);
+          if (!dummyResult.success) {
+            const errorMsg = `post9000Dummy 失敗: ${dummyResult.error?.error || '未知錯誤'}`;
+            errorWithTimestamp(errorMsg);
+            await this.handleApiError('post9000Dummy', dummyResult, false); // 不拋出錯誤，只記錄
+            await this.broadcastProjectInfo(this.broadcastWsRef); // 廣播更新的專案資訊（包含錯誤）
+            return; // 如果 dummy 呼叫失敗，則不進行正式呼叫
+          } else {
+            logWithTimestamp({ isForce: true },'post9000Dummy 成功，準備呼叫正式的 post9000 API');
+          }
           
           const result = await post9000(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
           if (!result.success) {
@@ -1110,6 +1118,8 @@ export default class Project {
             errorWithTimestamp(errorMsg);
             await this.handleApiError('post9000', result, false); // 不拋出錯誤，只記錄
             await this.broadcastProjectInfo(this.broadcastWsRef); // 廣播更新的專案資訊（包含錯誤）
+          } else {
+            logWithTimestamp({ isForce: true },'post9000 成功');
           }
           break;
         case "Connected":
