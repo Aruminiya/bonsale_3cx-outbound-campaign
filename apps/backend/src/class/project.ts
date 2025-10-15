@@ -1483,6 +1483,12 @@ export default class Project {
           this.handleWebSocketInitialization(broadcastWs, '3CX WebSocket 連接成功')
         },
         onMessage: (data: Buffer) => {
+          // 將 Buffer 轉換為字符串
+          const messageString = data.toString('utf8');
+          
+          // 嘗試解析 JSON
+          const messageObject = JSON.parse(messageString);
+          logWithTimestamp('📨 3CX WebSocket data:', messageObject);
           logWithTimestamp( '📨 3CX WebSocket 收到訊息:', {
             projectId: this.projectId,
             callFlowId: this.callFlowId,
