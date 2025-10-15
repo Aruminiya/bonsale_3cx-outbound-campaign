@@ -1114,7 +1114,7 @@ export default class Project {
                 const post9000Result = await post9000(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
                 
                 if (post9000Result.success) {
-                  logWithTimestamp({ isForce: true }, `✅ post9000 成功 (第 ${tryPost9000Times} 次嘗試): ${post9000Result.data}`);
+                  logWithTimestamp({ isForce: true }, `✅ post9000 成功 (第 ${tryPost9000Times} 次嘗試): ${JSON.stringify(post9000Result.data)}`);
                   post9000Success = true;
                   break; // 成功後跳出重試迴圈
                 } else {
@@ -1150,7 +1150,7 @@ export default class Project {
                 const dummyResult = await post9000Dummy(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
                 
                 if (dummyResult.success) {
-                  logWithTimestamp({ isForce: true }, `✅ post9000Dummy 成功`);
+                  logWithTimestamp({ isForce: true }, `✅ post9000Dummy 成功, ${JSON.stringify(dummyResult.data)}`);
                 } else {
                   const errorMsg = `❌ post9000Dummy 失敗: ${dummyResult.error?.error || '未知錯誤'}`;
                   errorWithTimestamp(errorMsg);
