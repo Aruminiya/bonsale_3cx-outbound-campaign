@@ -790,8 +790,8 @@ export default class Project {
         // 🆕 在處理下一個分機前添加延遲，給 API 和 WebSocket 一些反應時間
         const currentIndex = this.caller.indexOf(caller);
         if (currentIndex < this.caller.length - 1) {
-          logWithTimestamp(`⏳ 處理完分機 ${caller.dn}，等待 500ms 後處理下一個分機`);
-          await this.delay(500); // 500ms 延遲
+          logWithTimestamp(`⏳ 處理完分機 ${caller.dn}，等待 1000ms 後處理下一個分機`);
+          await this.delay(1000); // 1000ms 延遲
         }
       } catch (error) {
         errorWithTimestamp(`處理分機 ${caller.dn} 外撥時發生錯誤:`, error);
