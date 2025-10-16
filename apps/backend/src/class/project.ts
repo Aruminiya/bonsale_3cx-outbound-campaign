@@ -1080,133 +1080,158 @@ export default class Project {
       switch (status) {
         case "Dialing":
           logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為撥號中，前一通電話記錄為未接通`);
-          const callStatusResult = await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 2); // 2 表示未接通 更新 Bonsale 撥號狀態 失敗
-          await this.handleApiError('updateCallStatus', callStatusResult);
-          
-          const dialUpdateResult = await updateDialUpdate(previousCallRecord.projectId, previousCallRecord.customerId); // 紀錄失敗​次​數 ​這樣​後端​的​抓取​失​敗​名​單才​能​記​次​數 給​我​指定​的​失敗​名​單
-          await this.handleApiError('updateDialUpdate', dialUpdateResult);
-          
-          // 記錄完成後，移除使用過的撥號名單項目
-          await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
+          try {
+            const callStatusResult = await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 2); // 2 表示未接通 更新 Bonsale 撥號狀態 失敗
+            await this.handleApiError('updateCallStatus', callStatusResult);
+            
+            const dialUpdateResult = await updateDialUpdate(previousCallRecord.projectId, previousCallRecord.customerId); // 紀錄失敗​次​數 ​這樣​後端​的​抓取​失​敗​名​單才​能​記​次​數 給​我​指定​的​失敗​名​單
+            await this.handleApiError('updateDialUpdate', dialUpdateResult);
+            
+            // 記錄完成後，移除使用過的撥號名單項目
+            await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
 
-          // 更新自動撥號執行狀態
-          const autoDialResult1 = await updateBonsaleProjectAutoDialExecute(
-            this.projectId,
-            this.callFlowId,
-          );
-          await this.handleApiError('updateBonsaleProjectAutoDialExecute', autoDialResult1);
-          
-          if ((!previousCallRecord.description || previousCallRecord.description.trim() === '')
-             || (!previousCallRecord.description2 || previousCallRecord.description2.trim() === '')) {
-            warnWithTimestamp(`分機 ${previousCallRecord.dn} 的前一筆撥打記錄沒有 description 或 description2 描述資訊`);
-          } else {
-            // 有描述資訊才呼叫 post9000 API 和 post9000Dummy API
-            // 因為這是 21 世紀 需要 post9000 回去的紀錄 
-            // post9000Dummy 是 PY 需要的紀錄
+            // 更新自動撥號執行狀態
+            const autoDialResult1 = await updateBonsaleProjectAutoDialExecute(
+              this.projectId,
+              this.callFlowId,
+            );
+            await this.handleApiError('updateBonsaleProjectAutoDialExecute', autoDialResult1);
+            
+            // 針對 AI 外撥，呼叫 post9000 和 post9000Dummy API
+            if ((!previousCallRecord.description || previousCallRecord.description.trim() === '')
+               || (!previousCallRecord.description2 || previousCallRecord.description2.trim() === '')) {
+              warnWithTimestamp(`分機 ${previousCallRecord.dn} 的前一筆撥打記錄沒有 description 或 description2 描述資訊`);
+            } else {
+              // 有描述資訊才呼叫 post9000 API 和 post9000Dummy API
+              // 因為這是 21 世紀 需要 post9000 回去的紀錄 
+              // post9000Dummy 是 PY 需要的紀錄
 
-            logWithTimestamp(`分機 ${previousCallRecord.dn} 的前一筆撥打記錄有 description 和 description2 描述資訊`);
+              logWithTimestamp(`分機 ${previousCallRecord.dn} 的前一筆撥打記錄有 description 和 description2 描述資訊`);
 
-            // post9000 重試邏輯：最多嘗試 3 次
-            let post9000Success = false;
-            for (let tryPost9000Times = 1; tryPost9000Times <= 3; tryPost9000Times++) {
-              try {
-                logWithTimestamp(`嘗試呼叫 post9000 (第 ${tryPost9000Times} 次)`);
-                const post9000Result = await post9000(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
-                
-                if (post9000Result.success) {
-                  logWithTimestamp({ isForce: true }, `✅ post9000 成功 (第 ${tryPost9000Times} 次嘗試): ${JSON.stringify(post9000Result.data)}`);
-                  post9000Success = true;
-                  break; // 成功後跳出重試迴圈
-                } else {
-                  const errorMsg = `❌ post9000 失敗 (第 ${tryPost9000Times} 次): ${post9000Result.error?.error || '未知錯誤'}`;
+              // post9000 重試邏輯：最多嘗試 3 次
+              let post9000Success = false;
+              for (let tryPost9000Times = 1; tryPost9000Times <= 3; tryPost9000Times++) {
+                try {
+                  logWithTimestamp(`嘗試呼叫 post9000 (第 ${tryPost9000Times} 次)`);
+                  const post9000Result = await post9000(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
+                  
+                  if (post9000Result.success) {
+                    logWithTimestamp({ isForce: true }, `✅ post9000 成功 (第 ${tryPost9000Times} 次嘗試): ${JSON.stringify(post9000Result.data)}`);
+                    post9000Success = true;
+                    break; // 成功後跳出重試迴圈
+                  } else {
+                    const errorMsg = `❌ post9000 失敗 (第 ${tryPost9000Times} 次): ${post9000Result.error?.error || '未知錯誤'}`;
+                    errorWithTimestamp(errorMsg);
+                    await this.handleApiError('post9000', post9000Result, false); // 不拋出錯誤，只記錄
+                    
+                    if (tryPost9000Times < 3) {
+                      logWithTimestamp(`⏳ 等待 2 秒後重試 post9000`);
+                      await this.delay(2000); // 等待 2 秒後重試
+                    } else {
+                      errorWithTimestamp({ isForce: true }, `❌ post9000 已達最大重試次數 (${tryPost9000Times} 次)，停止嘗試: ${post9000Result.error?.error || '未知錯誤'}`);
+                    }
+                  }
+                } catch (error) {
+                  const errorMsg = `❌ post9000 異常 (第 ${tryPost9000Times} 次): ${error instanceof Error ? error.message : String(error)}`;
                   errorWithTimestamp(errorMsg);
-                  await this.handleApiError('post9000', post9000Result, false); // 不拋出錯誤，只記錄
+                  await this.setError(errorMsg);
                   
                   if (tryPost9000Times < 3) {
                     logWithTimestamp(`⏳ 等待 2 秒後重試 post9000`);
                     await this.delay(2000); // 等待 2 秒後重試
                   } else {
-                    errorWithTimestamp({ isForce: true }, `❌ post9000 已達最大重試次數 (${tryPost9000Times} 次)，停止嘗試: ${post9000Result.error?.error || '未知錯誤'}`);
+                    errorWithTimestamp(`❌ post9000 異常已達最大重試次數 (${tryPost9000Times} 次)，停止嘗試`);
                   }
                 }
-              } catch (error) {
-                const errorMsg = `❌ post9000 異常 (第 ${tryPost9000Times} 次): ${error instanceof Error ? error.message : String(error)}`;
-                errorWithTimestamp(errorMsg);
-                await this.setError(errorMsg);
-                
-                if (tryPost9000Times < 3) {
-                  logWithTimestamp(`⏳ 等待 2 秒後重試 post9000`);
-                  await this.delay(2000); // 等待 2 秒後重試
-                } else {
-                  errorWithTimestamp(`❌ post9000 異常已達最大重試次數 (${tryPost9000Times} 次)，停止嘗試`);
+              }
+
+              // 🎯 只有當 post9000 成功後，才執行 post9000Dummy
+              if (post9000Success) {
+                try {
+                  logWithTimestamp(`🔄 post9000 成功，開始呼叫 post9000Dummy`);
+                  const dummyResult = await post9000Dummy(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
+                  
+                  if (dummyResult.success) {
+                    logWithTimestamp({ isForce: true }, `✅ post9000Dummy 成功, ${JSON.stringify(dummyResult.data)}`);
+                  } else {
+                    const errorMsg = `❌ post9000Dummy 失敗: ${dummyResult.error?.error || '未知錯誤'}`;
+                    errorWithTimestamp(errorMsg);
+                    await this.handleApiError('post9000Dummy', dummyResult, false); // 不拋出錯誤，只記錄
+                  }
+                } catch (error) {
+                  const errorMsg = `❌ post9000Dummy 異常: ${error instanceof Error ? error.message : String(error)}`;
+                  errorWithTimestamp(errorMsg);
+                  await this.setError(errorMsg);
                 }
+              } else {
+                warnWithTimestamp(`⚠️ post9000 失敗，跳過 post9000Dummy 的呼叫`);
               }
             }
-
-            // 🎯 只有當 post9000 成功後，才執行 post9000Dummy
-            if (post9000Success) {
-              try {
-                logWithTimestamp(`🔄 post9000 成功，開始呼叫 post9000Dummy`);
-                const dummyResult = await post9000Dummy(previousCallRecord.description, previousCallRecord.description2, previousCallRecord.phone);
-                
-                if (dummyResult.success) {
-                  logWithTimestamp({ isForce: true }, `✅ post9000Dummy 成功, ${JSON.stringify(dummyResult.data)}`);
-                } else {
-                  const errorMsg = `❌ post9000Dummy 失敗: ${dummyResult.error?.error || '未知錯誤'}`;
-                  errorWithTimestamp(errorMsg);
-                  await this.handleApiError('post9000Dummy', dummyResult, false); // 不拋出錯誤，只記錄
-                }
-              } catch (error) {
-                const errorMsg = `❌ post9000Dummy 異常: ${error instanceof Error ? error.message : String(error)}`;
-                errorWithTimestamp(errorMsg);
-                await this.setError(errorMsg);
-              }
-            } else {
-              warnWithTimestamp(`⚠️ post9000 失敗，跳過 post9000Dummy 的呼叫`);
+          } catch (error) {
+            const errorMsg = `❌ Dialing 狀態處理異常: ${error instanceof Error ? error.message : String(error)}`;
+            errorWithTimestamp(errorMsg);
+            
+            // 即使發生錯誤，也要移除使用過的撥號名單項目
+            try {
+              await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
+            } catch (removeError) {
+              errorWithTimestamp(`❌ 移除撥號名單項目時發生錯誤: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
             }
           }
           break;
         case "Connected":
           logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為已接通，前一通電話記錄為已接通`);
-          const callStatusResult2 = await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 1); // 1 表示已接通 更新 Bonsale 撥號狀態 成功
-          await this.handleApiError('updateCallStatus (Connected)', callStatusResult2);
           const visitedAt = previousCallRecord.dialTime || new Date().toISOString(); // 使用撥打時間或當前時間
-          
-          // 記錄完成後，移除使用過的撥號名單項目
-          await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
-          
-          // 延遲 100 毫秒後再更新拜訪紀錄，確保狀態更新完成
-          setTimeout(async () => {
+          try {
+            const callStatusResult2 = await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 1); // 1 表示已接通 更新 Bonsale 撥號狀態 成功
+            await this.handleApiError('updateCallStatus (Connected)', callStatusResult2);
+
+            // 延遲 100 毫秒後再更新拜訪紀錄，確保狀態更新完成
+            setTimeout(async () => {
+              try {
+                const visitRecordResult = await updateVisitRecord(  // 紀錄 ​寫入​訪談​紀錄 ( ​要​延遲​是​因為​ 後端​需要​時間​寫入​資料​庫 讓​抓​名​單邏輯​正常​ )
+                  previousCallRecord.projectId, 
+                  previousCallRecord.customerId,
+                  'intro',
+                  'admin',
+                  visitedAt,
+                  '撥打成功',
+                  '撥打成功'
+                );
+                await this.handleApiError('updateVisitRecord', visitRecordResult, false);
+              } catch (error) {
+                const errorMsg = `updateVisitRecord 異常: ${error instanceof Error ? error.message : String(error)}`;
+                await this.setError(errorMsg);
+                logWithTimestamp({ isForce: true }, '❌ updateVisitRecord 異常:', {
+                  projectId: this.projectId,
+                  callFlowId: this.callFlowId,
+                  state: this.state,
+                  client_id: this.client_id,
+                  agentQuantity: this.agentQuantity,
+                  access_token: this.access_token ? '***已設置***' : '未設置',
+                  recurrence: this.recurrence,
+                  error: this.error,
+                  wsConnected: this.wsManager?.isConnected() || false,
+                  timestamp: new Date().toISOString(),
+                  errorMsg
+                });
+                errorWithTimestamp({ isForce: true }, errorMsg);
+              }
+            }, 100);
+            
+            // 記錄完成後，移除使用過的撥號名單項目
+            await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
+          } catch (error) {
+            const errorMsg = `❌ Connected 狀態處理異常: ${error instanceof Error ? error.message : String(error)}`;
+            errorWithTimestamp(errorMsg);
+            
+            // 即使發生錯誤，也要移除使用過的撥號名單項目
             try {
-              const visitRecordResult = await updateVisitRecord(  // 紀錄 ​寫入​訪談​紀錄 ( ​要​延遲​是​因為​ 後端​需要​時間​寫入​資料​庫 讓​抓​名​單邏輯​正常​ )
-                previousCallRecord.projectId, 
-                previousCallRecord.customerId,
-                'intro',
-                'admin',
-                visitedAt,
-                '撥打成功',
-                '撥打成功'
-              );
-              await this.handleApiError('updateVisitRecord', visitRecordResult, false);
-            } catch (error) {
-              const errorMsg = `updateVisitRecord 異常: ${error instanceof Error ? error.message : String(error)}`;
-              await this.setError(errorMsg);
-              logWithTimestamp({ isForce: true }, '❌ updateVisitRecord 異常:', {
-                projectId: this.projectId,
-                callFlowId: this.callFlowId,
-                state: this.state,
-                client_id: this.client_id,
-                agentQuantity: this.agentQuantity,
-                access_token: this.access_token ? '***已設置***' : '未設置',
-                recurrence: this.recurrence,
-                error: this.error,
-                wsConnected: this.wsManager?.isConnected() || false,
-                timestamp: new Date().toISOString(),
-                errorMsg
-              });
-              errorWithTimestamp({ isForce: true }, errorMsg);
+              await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
+            } catch (removeError) {
+              errorWithTimestamp(`❌ 移除撥號名單項目時發生錯誤: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
             }
-          }, 100);
+          }
 
           // 更新自動撥號執行狀態
           const autoDialResult2 = await updateBonsaleProjectAutoDialExecute(

@@ -144,7 +144,7 @@ export class CallListManager {
         return false;
       }
     } catch (error) {
-      errorWithTimestamp('❌ 移除使用過的撥號名單項目失敗:', error);
+      errorWithTimestamp(`❌ 移除使用過的撥號名單項目失敗 - 專案: ${projectId}, 客戶: ${customerId}:`, error);
       return false;
     }
   }
