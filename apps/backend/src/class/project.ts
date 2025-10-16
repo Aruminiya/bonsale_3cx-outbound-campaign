@@ -1221,10 +1221,17 @@ export default class Project {
             
             // 記錄完成後，移除使用過的撥號名單項目
             await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
+
+            // 更新自動撥號執行狀態
+            const autoDialResult2 = await updateBonsaleProjectAutoDialExecute(
+              this.projectId,
+              this.callFlowId,
+            );
+            await this.handleApiError('updateBonsaleProjectAutoDialExecute (Connected)', autoDialResult2);
           } catch (error) {
             const errorMsg = `❌ Connected 狀態處理異常: ${error instanceof Error ? error.message : String(error)}`;
             errorWithTimestamp(errorMsg);
-            
+
             // 即使發生錯誤，也要移除使用過的撥號名單項目
             try {
               await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
@@ -1232,22 +1239,32 @@ export default class Project {
               errorWithTimestamp(`❌ 移除撥號名單項目時發生錯誤: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
             }
           }
-
-          // 更新自動撥號執行狀態
-          const autoDialResult2 = await updateBonsaleProjectAutoDialExecute(
-            this.projectId,
-            this.callFlowId,
-          );
-          await this.handleApiError('updateBonsaleProjectAutoDialExecute (Connected)', autoDialResult2);
           break;
         default:
           warnWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為未知，無法記錄前一通電話結果`);
+          // 即使狀態未知，也要移除使用過的撥號名單項目，避免名單殘存
+          try {
+            await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
+            logWithTimestamp(`🗑️ 已移除未知狀態的撥號名單項目 - 專案: ${previousCallRecord.projectId}, 客戶: ${previousCallRecord.customerId}`);
+          } catch (removeError) {
+            errorWithTimestamp(`❌ 移除未知狀態撥號名單項目時發生錯誤: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
+          }
       }
-      
+
     } catch (error) {
       const errorMsg = `記錄 Bonsale 通話結果失敗: ${error instanceof Error ? error.message : String(error)}`;
       await this.setError(errorMsg);
       errorWithTimestamp('記錄 Bonsale 通話結果失敗:', error);
+
+      // 即使發生錯誤，也要移除使用過的撥號名單項目，避免名單殘存
+      if (previousCallRecord) {
+        try {
+          await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
+          logWithTimestamp(`🗑️ 已移除異常處理中的撥號名單項目 - 專案: ${previousCallRecord.projectId}, 客戶: ${previousCallRecord.customerId}`);
+        } catch (removeError) {
+          errorWithTimestamp(`❌ 移除異常處理中撥號名單項目時發生錯誤: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
+        }
+      }
       // 不拋出錯誤，避免影響主要的外撥流程
     }
   }
