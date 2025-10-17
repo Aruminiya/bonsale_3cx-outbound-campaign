@@ -191,7 +191,7 @@ mainWebSocketServer.on('connection', async (wsClient) => {
       
       isAlive = false;
       wsClient.ping();
-      logWithTimestamp('💓 發送 WebSocket ping');
+      // logWithTimestamp('💓 發送 WebSocket ping');
     }, 60000);
   };
   
@@ -200,7 +200,7 @@ mainWebSocketServer.on('connection', async (wsClient) => {
   
   // 監聽 pong 回應
   wsClient.on('pong', () => {
-    logWithTimestamp('💚 收到 WebSocket pong');
+    // logWithTimestamp('💚 收到 WebSocket pong');
     isAlive = true;
   });
 
