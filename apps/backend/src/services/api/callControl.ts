@@ -39,7 +39,7 @@ export async function get3cxToken(client_id: string, client_secret: string) {
 }
 
 // 撥打電話
-export async function makeCall(token: string, dn: string, device_id: string, reason: string, destination: string, timeout = 30) {
+export async function makeCall(token: string, dn: string, device_id: string, reason: string, destination: string, timeout = 50) {
   try {
     const response = await axios.post(
       `${host}/callcontrol/${dn}/devices/${device_id}/makecall`,

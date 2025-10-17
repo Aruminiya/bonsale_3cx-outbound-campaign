@@ -867,13 +867,32 @@ export default class Project {
               // 如果該分機已有撥打記錄，移動到 previousCallRecord
               const existingCall = this.latestCallRecord[existingCallIndex];
               if (existingCall) {
-                // 更新 previousCallRecord 中該分機的記錄
+                // 檢查 previousCallRecord 中是否已有該分機的舊記錄
                 const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
+
+                // 如果已經有舊記錄，需要先處理它，避免被覆蓋而遺失
                 if (prevCallIndex >= 0) {
+                  const oldRecord = this.previousCallRecord[prevCallIndex];
+                  if (oldRecord) {
+                    logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
+
+                    try {
+                      // 立即處理舊記錄
+                      await this.recordBonsaleCallResult(oldRecord);
+                      logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
+                    } catch (error) {
+                      errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
+                      // 即使處理失敗，也繼續執行，避免阻塞流程
+                    }
+                  }
+
+                  // 然後用新記錄覆蓋
                   this.previousCallRecord[prevCallIndex] = { ...existingCall };
                 } else {
+                  // 沒有舊記錄，直接添加新記錄
                   this.previousCallRecord.push({ ...existingCall });
                 }
+
                 logWithTimestamp(`保存分機 ${dn} 的前一筆撥打記錄 - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
               }
             }
@@ -921,20 +940,38 @@ export default class Project {
             if (existingCallIndex >= 0) {
               const existingCall = this.latestCallRecord[existingCallIndex];
               if (existingCall) {
-                // 移動到 previousCallRecord
+                // 檢查 previousCallRecord 中是否已有該分機的舊記錄
                 const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
+
+                // 如果已經有舊記錄，需要先處理它，避免被覆蓋而遺失
                 if (prevCallIndex >= 0) {
+                  const oldRecord = this.previousCallRecord[prevCallIndex];
+                  if (oldRecord) {
+                    logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
+
+                    try {
+                      // 立即處理舊記錄
+                      await this.recordBonsaleCallResult(oldRecord);
+                      logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
+                    } catch (error) {
+                      errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
+                      // 即使處理失敗，也繼續執行，避免阻塞流程
+                    }
+                  }
+
+                  // 然後用新記錄覆蓋
                   this.previousCallRecord[prevCallIndex] = { ...existingCall };
                 } else {
+                  // 沒有舊記錄，直接添加新記錄
                   this.previousCallRecord.push({ ...existingCall });
                 }
-                
+
                 // 從 latestCallRecord 中移除
                 this.latestCallRecord.splice(existingCallIndex, 1);
-                
+
                 // 同步更新到 Redis
                 await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
-                
+
                 logWithTimestamp(`保存分機 ${dn} 的最後一筆撥打記錄到 previousCallRecord - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
               }
             }
