@@ -1,8 +1,8 @@
 import { WebSocketServer } from "ws";
 import dotenv from 'dotenv';
-import { throttle, debounce, type DebouncedFunc } from 'lodash';
+import { throttle, type DebouncedFunc } from 'lodash';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from '../util/timestamp';
-import { getCaller, makeCall, get3cxToken } from '../services/api/callControl'
+import { getCaller, makeCall, get3cxToken, getParticipant } from '../services/api/callControl'
 import { ProjectManager } from '../class/projectManager';
 import { broadcastAllProjects } from '../components/broadcast';
 import { WebSocketManager } from './webSocketManager';
@@ -71,6 +71,15 @@ type Caller = {
   participants: Array<Participants>;
 }
 
+type WsMessageObject = {
+  sequence: number;
+  event: {
+    event_type: 0 | 1; // 0: 有通話事件, 1: 通話事件發生變化 （ 接聽 掛斷等等 ）
+    entity: string; // 這會是一個 3CX API 端點 /callcontrol/45/participants/17
+    attached_data: unknown | null;
+  }
+}
+
 export default class Project {
   grant_type: string;
   client_id: string;
@@ -92,7 +101,7 @@ export default class Project {
   private tokenManager: TokenManager;
   private throttledMessageHandler: DebouncedFunc<(broadcastWs: WebSocketServer, data: Buffer) => Promise<void>> | null = null;
   // 🆕 為 outboundCall 方法添加 debounce
-  private debouncedOutboundCall: DebouncedFunc<(broadcastWs?: WebSocketServer, isExecuteOutboundCalls?: boolean) => Promise<void>> | null = null;
+  private throttledOutboundCall: DebouncedFunc<(broadcastWs: WebSocketServer | undefined, eventEntity: string | null, isExecuteOutboundCalls?: boolean, isInitCall?: boolean) => Promise<void>> | null = null;
   private idleCheckTimer: NodeJS.Timeout | null = null; // 空閒檢查定時器
   private idleCheckInterval: number = 30000; // 當前檢查間隔（毫秒）
   private readonly minIdleCheckInterval: number = 30000; // 最小檢查間隔 30 秒
@@ -150,15 +159,15 @@ export default class Project {
 
     // 初始化 TokenManager
     this.tokenManager = new TokenManager(client_id, client_secret, projectId, access_token);
-    
-    // 初始化 throttled WebSocket 訊息處理器 (1000ms 內最多執行一次)
-    this.throttledMessageHandler = throttle(this.processWebSocketMessage.bind(this), 1000, {
+
+    // 初始化 throttled WebSocket 訊息處理器 (100ms 內最多執行一次)
+    this.throttledMessageHandler = throttle(this.processWebSocketMessage.bind(this), 100, {
       leading: false,  // 第一次不立即執行
       trailing: true // 在等待期結束後執行
     });
 
-    // 🆕 初始化 debounced outboundCall 方法 (100ms 內最多執行一次)
-    this.debouncedOutboundCall = debounce(this.outboundCall.bind(this), 100, {
+    // 🆕 初始化 throttle outboundCall 方法 (100ms 內最多執行一次)
+    this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 100, {
       leading: false,   // 第一次不立即執行
       trailing: true  // 在等待期結束後執行
     });
@@ -517,34 +526,35 @@ export default class Project {
       const messageString = data.toString('utf8');
       
       // 嘗試解析 JSON
-      const messageObject = JSON.parse(messageString);
+      const messageObject: WsMessageObject = JSON.parse(messageString);
 
       logWithTimestamp(`WebSocket 訊息處理 (throttled) - 事件類型: ${messageObject.event?.event_type}`);
 
       // 根據不同的事件類型處理邏輯
-      switch (messageObject.event.event_type) {
+      const eventType = messageObject.event.event_type;
+      const eventEntity = messageObject.event.entity;
+      switch (eventType) {
         case 0:
-          logWithTimestamp(`狀態 ${messageObject.event.event_type}:`, messageObject.event);
-          // 🆕 使用 debounced 版本
-          if (this.debouncedOutboundCall) {
-            await this.debouncedOutboundCall(broadcastWs, false);
+          logWithTimestamp(`狀態 ${eventType}:`, messageObject.event);
+          if (this.throttledOutboundCall) {
+            await this.throttledOutboundCall(broadcastWs, eventEntity, false);
           }
           break;
         case 1:
-          logWithTimestamp(`狀態 ${messageObject.event.event_type}:`, messageObject.event);
+          logWithTimestamp(`狀態 ${eventType}:`, messageObject.event);
 
           // 如果專案狀態是 stop，檢查是否還有活躍通話
           if (this.state === 'stop') {
             await this.handleStopStateLogic(broadcastWs);
           } else {
             // 🆕 使用 debounced 版本
-            if (this.debouncedOutboundCall) {
-              await this.debouncedOutboundCall(broadcastWs);
+            if (this.throttledOutboundCall) {
+              await this.throttledOutboundCall(broadcastWs, eventEntity, true);
             }
           }
           break; 
         default:
-          logWithTimestamp('未知事件類型:', messageObject.event.event_type);
+          logWithTimestamp('未知事件類型:', eventType);
       }
       
     } catch (error) {
@@ -560,7 +570,7 @@ export default class Project {
    * @param updateCaller 是否更新 caller 資訊，預設為 true
    * @private
    */
-  private async outboundCall(broadcastWs?: WebSocketServer, isExecuteOutboundCalls: boolean = true): Promise<void> {
+  private async outboundCall(broadcastWs: WebSocketServer | undefined, eventEntity: string | null, isExecuteOutboundCalls: boolean = true, isInitCall: boolean = false): Promise<void> {
     try {
       // 清除之前的資訊提示（如果有的話）
       await this.clearErrorWarningInfo();
@@ -596,7 +606,7 @@ export default class Project {
         await this.handleTokenUpdateWebSocketReconnect(broadcastWs);
         // 注意：分機狀態管理器現在使用管理員 token 自動管理，不需要同步更新
       }
-
+      
       // 步驟三: 獲取並更新 caller 資訊
       await this.updateCallerInfo();
 
@@ -607,10 +617,17 @@ export default class Project {
       if (broadcastWs) {
         await this.broadcastProjectInfo(broadcastWs);
       }
-
+      
       // 步驟六: 執行外撥邏輯
+      // 是否初始撥號
+      if (isInitCall) {
+        await this.executeOutboundCalls(eventEntity, true);
+        return;
+      }
+      // 確認是否要撥號
       if (isExecuteOutboundCalls) {
-        await this.executeOutboundCalls();
+        await this.executeOutboundCalls(eventEntity, false);
+        return;
       }
 
     } catch (error) {
@@ -724,7 +741,7 @@ export default class Project {
    * 執行外撥通話
    * @private
    */
-  private async executeOutboundCalls(): Promise<void> {
+  private async executeOutboundCalls(eventEntity: string | null, isInitCall: boolean): Promise<void> {
     // 檢查是否有分機
     if (!this.caller || this.caller.length === 0) {
       errorWithTimestamp('當前專案沒有分機');
@@ -761,42 +778,125 @@ export default class Project {
       }
     }
 
-    // 遍歷所有分機進行外撥 (使用 for 循環確保順序執行)
-    for (const caller of this.caller) {
-      try {
-        // 檢查代理人用戶是否忙碌
-        if (!this.access_token) {
-          logWithTimestamp(`無效的 access_token，跳過分機 ${caller.dn} 的外撥`);
-          continue;
+    if (!this.access_token) {
+      logWithTimestamp(`無效的 access_token，跳過分外撥`);
+      this.setError('無效的 access_token，無法進行外撥');
+      return;
+    }
+
+    // 檢查是否為初始撥號
+    if (isInitCall) {
+      logWithTimestamp(`初始撥號，開始對所有分機進行外撥檢查`);
+      // 遍歷所有分機進行外撥 (使用 for 循環確保順序執行)
+      // 只有最一開始的初始撥號 才能 使用 this.caller 來遍歷所有分機 
+      // 之後的外撥事件 都是針對單一分機進行處理
+      // 否則會導致競態競爭
+      for (const caller of this.caller) {
+        try {
+          // 檢查代理人用戶是否忙碌
+          if (!this.access_token) {
+            logWithTimestamp(`無效的 access_token，跳過分機 ${caller.dn} 的外撥`);
+            continue;
+          }
+
+          // 檢查是否有進行中的通話
+          if (caller.participants && caller.participants.length > 0) {
+            logWithTimestamp(`分機 ${caller.dn} 有 ${caller.participants.length} 個通話中，跳過外撥`);
+            continue;
+          }
+          
+          const agentUser = await getUsers(this.access_token, caller.dn);
+          if (!agentUser.success) {
+            logWithTimestamp(`無法獲取分機 ${caller.dn} 的代理人用戶資訊，跳過外撥`);
+            continue;
+          }
+          const CurrentProfileName = agentUser.data.value[0]?.CurrentProfileName;
+          if (CurrentProfileName) {
+            const isAgentUserBusy = CurrentProfileName !== "Available";
+            if (isAgentUserBusy) {
+              logWithTimestamp(`分機 ${caller.dn} 的代理人用戶忙碌，跳過外撥`);
+              continue;
+            }
+          }
+          
+          // 代理人可用，執行外撥邏輯
+          await this.processCallerOutbound(caller.dn, caller.devices[0].device_id);
+          
+          // 🆕 在處理下一個分機前添加延遲，給 API 和 WebSocket 一些反應時間
+          const currentIndex = this.caller.indexOf(caller);
+          if (currentIndex < this.caller.length - 1) {
+            logWithTimestamp(`⏳ 處理完分機 ${caller.dn}，等待 1000ms 後處理下一個分機`);
+            await this.delay(1000); // 1000ms 延遲
+          }
+          
+        } catch (callerError) {
+          errorWithTimestamp(`處理分機 ${caller.dn} 初始外撥時發生錯誤:`, callerError);
+          // 繼續處理下一個分機
+        }
+      }
+    } else {
+      // 非初始撥號，只處理單一分機
+      if (!eventEntity) {
+        logWithTimestamp(`無效的事件實體，跳過外撥`);
+        this.setError('無效的事件實體，無法進行外撥');
+        return;
+      }
+
+      const participant = await getParticipant(this.access_token, eventEntity);
+      if (!participant.success) {
+        logWithTimestamp(`無法獲取事件實體 ${eventEntity} 這邊可能是對方掛斷了`);
+        // 這邊可能是對方掛斷了
+        // 解析 eventEntity 來獲取分機資訊
+        const eventEntity_dn = eventEntity.split('/')[2]; // 格式固定為 /callcontrol/{dnnumber}/participants/{id}
+
+        // 檢查代理人用戶是否空閒了
+        // const callControls = await getCaller(this.access_token);
+        // if (!callControls.success) {
+        //   errorWithTimestamp(`無法獲取事件實體 ${eventEntity} 的呼叫控制資訊，跳過外撥`);
+        //   this.setError(`無法獲取事件實體 ${eventEntity} 的呼叫控制資訊，跳過外撥`);
+        //   return;
+        // }
+        const callControl = this.caller.find((caller: Caller) => caller.dn === eventEntity_dn);
+        if (!callControl) {
+          errorWithTimestamp(`無法在呼叫控制清單中找到分機 ${eventEntity_dn}，跳過外撥`);
+          this.setError(`無法在呼叫控制清單中找到分機 ${eventEntity_dn}，跳過外撥`);
+          return;
+        }
+        const participants = callControl.participants;
+        if (participants && participants.length > 0) {
+          warnWithTimestamp(`分機 ${eventEntity_dn} 仍有參與者，代理人用戶可能仍忙碌，跳過外撥`);
+          this.setWarning(`分機 ${eventEntity_dn} 仍有參與者，代理人用戶可能仍忙碌，跳過外撥`);
+          return;
         }
         
-        const agentUser = await getUsers(this.access_token, caller.dn);
+        // 檢查代理人用戶是否忙碌
+        const agentUser = await getUsers(this.access_token, eventEntity_dn);
         if (!agentUser.success) {
-          logWithTimestamp(`無法獲取分機 ${caller.dn} 的代理人用戶資訊，跳過外撥`);
-          continue;
+          errorWithTimestamp(`無法獲取分機 ${eventEntity_dn} 的代理人用戶資訊，跳過外撥`);
+          this.setError(`無法獲取分機 ${eventEntity_dn} 的代理人用戶資訊，跳過外撥`);
+          return;
         }
         const CurrentProfileName = agentUser.data.value[0]?.CurrentProfileName;
         if (CurrentProfileName) {
           const isAgentUserBusy = CurrentProfileName !== "Available";
           if (isAgentUserBusy) {
-            logWithTimestamp(`分機 ${caller.dn} 的代理人用戶忙碌，跳過外撥`);
-            continue;
+            warnWithTimestamp(`分機 ${eventEntity_dn} 的代理人用戶忙碌，跳過外撥`);
+            this.setWarning(`分機 ${eventEntity_dn} 的代理人用戶忙碌，跳過外撥`);
+            return;
           }
         }
-        
+
         // 代理人可用，執行外撥邏輯
-        await this.processCallerOutbound(caller);
-        
-        // 🆕 在處理下一個分機前添加延遲，給 API 和 WebSocket 一些反應時間
-        const currentIndex = this.caller.indexOf(caller);
-        if (currentIndex < this.caller.length - 1) {
-          logWithTimestamp(`⏳ 處理完分機 ${caller.dn}，等待 1000ms 後處理下一個分機`);
-          await this.delay(1000); // 1000ms 延遲
+        logWithTimestamp(`分機 ${eventEntity_dn} 的代理人用戶可用，繼續外撥流程`);
+        const currentDeviceId = callControl.devices[0]?.device_id;
+        await this.processCallerOutbound(eventEntity_dn, currentDeviceId);
+      } else {
+        logWithTimestamp(`成功獲取事件實體 ${eventEntity} 的參與者資訊:`, participant.data);
+        if (!participant.data) {
+          errorWithTimestamp(`參與者資料不完整, 無法進行外撥`);
+          this.setError(`參與者資料不完整, 無法進行外撥`);
+          return;
         }
-      } catch (error) {
-        errorWithTimestamp(`處理分機 ${caller.dn} 外撥時發生錯誤:`, error);
-        // 繼續處理下一個分機，不中斷整個流程
-        continue;
       }
     }
   }
@@ -806,206 +906,162 @@ export default class Project {
    * @param caller 呼叫者資訊
    * @private
    */
-  private async processCallerOutbound(caller: Caller): Promise<void> {
+  private async processCallerOutbound(dn: string, deviceId: string): Promise<void> {
     try {
-      // 檢查分機是否有設備
-      if (!caller.devices || caller.devices.length === 0) {
-        warnWithTimestamp(`分機 ${caller.dn} 沒有可用設備`);
+      if (!dn || !deviceId) {
+        errorWithTimestamp('分機或設備 ID 未定義，無法進行外撥處理');
         return;
       }
-
-      const { dn, device_id } = caller.devices[0];
 
       // 🚨 臨界區段保護：獲取分機處理鎖
       if (!this.acquireExtensionLock(dn)) {
         return; // 無法獲取鎖，跳過處理
       }
 
-      try {
-        // 🆕 每次處理前都獲取最新的分機狀態（防止使用過時資料）
-        logWithTimestamp(`🔄 獲取分機 ${dn} 的最新狀態`);
-        const newCallerResult = await getCaller(this.access_token!);
-        
-        if (!newCallerResult.success) {
-          warnWithTimestamp(`❌ 無法獲取分機 ${dn} 的最新狀態，跳過處理`);
-          return;
+
+      // 從 Redis 獲取下一個要撥打的電話號碼
+      const nextCallItem = await CallListManager.getNextCallItem(this.projectId);
+
+      // 檢查並補充撥號名單（如果數量不足）
+      await this.checkAndReplenishCallList();
+
+      // 有撥號名單，進行撥打
+      if (nextCallItem) {
+        // 初始化陣列（如果需要）
+        if (!this.latestCallRecord) {
+          this.latestCallRecord = [];
         }
-        
-        // 找到對應的分機資訊
-        const currentCallerInfo = newCallerResult.data.find((c: Caller) => c.dn === dn);
-        if (!currentCallerInfo) {
-          warnWithTimestamp(`❌ 找不到分機 ${dn} 的資訊，跳過處理`);
-          return;
+        if (!this.previousCallRecord) {
+          this.previousCallRecord = [];
         }
-        
-        const { participants } = currentCallerInfo;
-        logWithTimestamp(`📞 分機 ${dn} 當前狀態 - 通話數: ${participants?.length || 0}`);
 
-        // 檢查分機是否空閒
-        if (!participants || participants.length === 0) {
-          logWithTimestamp(`分機 ${dn} 空閒，可以撥打電話`);
-          
-          // 從 Redis 獲取下一個要撥打的電話號碼
-          const nextCallItem = await CallListManager.getNextCallItem(this.projectId);
+        // 檢查該分機是否已有撥打記錄
+        const existingCallIndex = this.latestCallRecord.findIndex(call => call?.dn === dn);
+        if (existingCallIndex >= 0) {
+          // 如果該分機已有撥打記錄，移動到 previousCallRecord
+          const existingCall = this.latestCallRecord[existingCallIndex];
+          if (existingCall) {
+            // 檢查 previousCallRecord 中是否已有該分機的舊記錄
+            const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
 
-          // 檢查並補充撥號名單（如果數量不足）
-          await this.checkAndReplenishCallList();
-          
-          if (nextCallItem) {
-            // 初始化陣列（如果需要）
-            if (!this.latestCallRecord) {
-              this.latestCallRecord = [];
-            }
-            if (!this.previousCallRecord) {
-              this.previousCallRecord = [];
-            }
+            // 如果已經有舊記錄，需要先處理它，避免被覆蓋而遺失
+            if (prevCallIndex >= 0) {
+              const oldRecord = this.previousCallRecord[prevCallIndex];
+              if (oldRecord) {
+                logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
 
-            // 檢查該分機是否已有撥打記錄
-            const existingCallIndex = this.latestCallRecord.findIndex(call => call?.dn === dn);
-            
-            if (existingCallIndex >= 0) {
-              // 如果該分機已有撥打記錄，移動到 previousCallRecord
-              const existingCall = this.latestCallRecord[existingCallIndex];
-              if (existingCall) {
-                // 檢查 previousCallRecord 中是否已有該分機的舊記錄
-                const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
-
-                // 如果已經有舊記錄，需要先處理它，避免被覆蓋而遺失
-                if (prevCallIndex >= 0) {
-                  const oldRecord = this.previousCallRecord[prevCallIndex];
-                  if (oldRecord) {
-                    logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
-
-                    try {
-                      // 立即處理舊記錄
-                      await this.recordBonsaleCallResult(oldRecord);
-                      logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
-                    } catch (error) {
-                      errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
-                      // 即使處理失敗，也繼續執行，避免阻塞流程
-                    }
-                  }
-
-                  // 然後用新記錄覆蓋
-                  this.previousCallRecord[prevCallIndex] = { ...existingCall };
-                } else {
-                  // 沒有舊記錄，直接添加新記錄
-                  this.previousCallRecord.push({ ...existingCall });
-                }
-
-                logWithTimestamp(`保存分機 ${dn} 的前一筆撥打記錄 - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
+                // try {
+                //   // 立即處理舊記錄
+                //   await this.recordBonsaleCallResult(oldRecord);
+                //   logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
+                // } catch (error) {
+                //   errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
+                //   // 即使處理失敗，也繼續執行，避免阻塞流程
+                // }
               }
-            }
 
-            // 創建新的撥打記錄
-            const newCallRecord: CallRecord = {
-              customerId: nextCallItem.customerId,
-              memberName: nextCallItem.memberName,
-              phone: nextCallItem.phone,
-              description: nextCallItem.description || null,
-              description2: nextCallItem.description2 || null,
-              status: "Dialing", // 初始狀態為撥號中
-              projectId: nextCallItem.projectId,
-              dn: dn,
-              dialTime: new Date().toISOString()
-            };
-
-            // 更新或添加當前撥打記錄
-            if (existingCallIndex >= 0) {
-              this.latestCallRecord[existingCallIndex] = newCallRecord;
+              // 然後用新記錄覆蓋
+              this.previousCallRecord[prevCallIndex] = { ...existingCall };
             } else {
-              this.latestCallRecord.push(newCallRecord);
+              // 沒有舊記錄，直接添加新記錄
+              this.previousCallRecord.push({ ...existingCall });
             }
-            
+
+            logWithTimestamp(`保存分機 ${dn} 的前一筆撥打記錄 - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
+          }
+        }
+
+        // 創建新的撥打記錄
+        const newCallRecord: CallRecord = {
+          customerId: nextCallItem.customerId,
+          memberName: nextCallItem.memberName,
+          phone: nextCallItem.phone,
+          description: nextCallItem.description || null,
+          description2: nextCallItem.description2 || null,
+          status: "Dialing", // 初始狀態為撥號中
+          projectId: nextCallItem.projectId,
+          dn: dn,
+          dialTime: new Date().toISOString()
+        };
+
+        // 更新或添加當前撥打記錄
+        if (existingCallIndex >= 0) {
+          this.latestCallRecord[existingCallIndex] = newCallRecord;
+        } else {
+          this.latestCallRecord.push(newCallRecord);
+        }
+        
+        // 同步更新到 Redis
+        await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
+        
+        // 有撥號名單，進行撥打
+        logWithTimestamp(`準備撥打 - 客戶: ${nextCallItem.memberName} (${nextCallItem.customerId}), 電話: ${nextCallItem.phone}, 分機: ${dn}`);
+        await this.makeOutboundCall(dn, deviceId, nextCallItem.phone, 2000);
+      } else {
+        // 沒有撥號名單，但要檢查該分機是否有當前撥打記錄需要處理
+        logWithTimestamp(`專案 ${this.projectId} 的撥號名單已空，分機 ${dn} 暫無可撥打號碼`);
+        
+        // 初始化陣列（如果需要）
+        if (!this.latestCallRecord) {
+          this.latestCallRecord = [];
+        }
+        if (!this.previousCallRecord) {
+          this.previousCallRecord = [];
+        }
+
+        // 檢查該分機是否有當前撥打記錄需要移動到 previousCallRecord
+        const existingCallIndex = this.latestCallRecord.findIndex(call => call?.dn === dn);
+        if (existingCallIndex >= 0) {
+          const existingCall = this.latestCallRecord[existingCallIndex];
+          if (existingCall) {
+            // 檢查 previousCallRecord 中是否已有該分機的舊記錄
+            const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
+
+            // 如果已經有舊記錄，需要先處理它，避免被覆蓋而遺失
+            if (prevCallIndex >= 0) {
+              const oldRecord = this.previousCallRecord[prevCallIndex];
+              if (oldRecord) {
+                logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
+
+                // try {
+                //   // 立即處理舊記錄
+                //   await this.recordBonsaleCallResult(oldRecord);
+                //   logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
+                // } catch (error) {
+                //   errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
+                //   // 即使處理失敗，也繼續執行，避免阻塞流程
+                // }
+              }
+
+              // 然後用新記錄覆蓋
+              this.previousCallRecord[prevCallIndex] = { ...existingCall };
+            } else {
+              // 沒有舊記錄，直接添加新記錄
+              this.previousCallRecord.push({ ...existingCall });
+            }
+
+            // 從 latestCallRecord 中移除
+            this.latestCallRecord.splice(existingCallIndex, 1);
+
             // 同步更新到 Redis
             await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
-            
-            // 有撥號名單，進行撥打
-            logWithTimestamp(`準備撥打 - 客戶: ${nextCallItem.memberName} (${nextCallItem.customerId}), 電話: ${nextCallItem.phone}, 分機: ${dn}`);
-            await this.makeOutboundCall(dn, device_id, nextCallItem.phone, 2000);
-          } else {
-            // 沒有撥號名單，但要檢查該分機是否有當前撥打記錄需要處理
-            logWithTimestamp(`專案 ${this.projectId} 的撥號名單已空，分機 ${dn} 暫無可撥打號碼`);
-            
-            // 初始化陣列（如果需要）
-            if (!this.latestCallRecord) {
-              this.latestCallRecord = [];
-            }
-            if (!this.previousCallRecord) {
-              this.previousCallRecord = [];
-            }
 
-            // 檢查該分機是否有當前撥打記錄需要移動到 previousCallRecord
-            const existingCallIndex = this.latestCallRecord.findIndex(call => call?.dn === dn);
-            if (existingCallIndex >= 0) {
-              const existingCall = this.latestCallRecord[existingCallIndex];
-              if (existingCall) {
-                // 檢查 previousCallRecord 中是否已有該分機的舊記錄
-                const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
-
-                // 如果已經有舊記錄，需要先處理它，避免被覆蓋而遺失
-                if (prevCallIndex >= 0) {
-                  const oldRecord = this.previousCallRecord[prevCallIndex];
-                  if (oldRecord) {
-                    logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
-
-                    try {
-                      // 立即處理舊記錄
-                      await this.recordBonsaleCallResult(oldRecord);
-                      logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
-                    } catch (error) {
-                      errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
-                      // 即使處理失敗，也繼續執行，避免阻塞流程
-                    }
-                  }
-
-                  // 然後用新記錄覆蓋
-                  this.previousCallRecord[prevCallIndex] = { ...existingCall };
-                } else {
-                  // 沒有舊記錄，直接添加新記錄
-                  this.previousCallRecord.push({ ...existingCall });
-                }
-
-                // 從 latestCallRecord 中移除
-                this.latestCallRecord.splice(existingCallIndex, 1);
-
-                // 同步更新到 Redis
-                await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
-
-                logWithTimestamp(`保存分機 ${dn} 的最後一筆撥打記錄到 previousCallRecord - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
-              }
-            }
-            
-            // 即使沒有撥號名單，也要呼叫 makeOutboundCall 來處理前一通電話的結果
-            await this.makeOutboundCall(dn, device_id, null, 2000);
+            logWithTimestamp(`保存分機 ${dn} 的最後一筆撥打記錄到 previousCallRecord - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
           }
-        } else {
-          warnWithTimestamp(`分機 ${dn} 已有通話中（${participants.length} 通），無法撥打下一通電話`);
-          
-          // 🆕 詳細記錄當前通話狀態（用於調試）
-          participants.forEach((participant: Participants, index: number) => {
-            logWithTimestamp(`  通話 ${index + 1}: ${participant.status} - ${participant.party_caller_id} (CallID: ${participant.callid})`);
-          });
         }
-      } catch (processingError) {
-        const errorMsg = `處理分機 ${dn} 外撥邏輯時發生錯誤: ${processingError instanceof Error ? processingError.message : String(processingError)}`;
-        await this.setError(errorMsg);
-        errorWithTimestamp(`處理分機 ${dn} 外撥邏輯時發生錯誤:`, processingError);
-      } finally {
-        // 🚨 臨界區段結束：延遲釋放鎖（給 WebSocket 狀態更新一些時間）
-        setTimeout(() => {
-          this.releaseExtensionLock(dn);
-        }, 3000); // 3秒後釋放鎖
+        
+        // 即使沒有撥號名單，也要呼叫 makeOutboundCall 來處理前一通電話的結果
+        await this.makeOutboundCall(dn, deviceId, null, 2000);
       }
     } catch (error) {
-      const errorMsg = `處理分機 ${caller.dn} 外撥時發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
+      const errorMsg = `處理分機 ${dn} 外撥時發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
       await this.setError(errorMsg);
-      errorWithTimestamp(`處理分機 ${caller.dn} 外撥時發生錯誤:`, error);
-      
-      // 🆕 外層錯誤處理也要釋放鎖
-      if (caller.devices && caller.devices.length > 0) {
-        this.releaseExtensionLock(caller.devices[0].dn);
-      }
+      errorWithTimestamp(`處理分機 ${dn} 外撥時發生錯誤:`, error);
+    } finally {
+      // 🚨 臨界區段結束：延遲釋放鎖（給 WebSocket 狀態更新一些時間）
+      setTimeout(() => {
+        this.releaseExtensionLock(dn);
+      }, 3000); // 3秒後釋放鎖
     }
   }
 
@@ -1513,9 +1569,9 @@ export default class Project {
       
       // 執行外撥邏輯
       logWithTimestamp(`📞 執行外撥邏輯 - 專案: ${this.projectId}`);
-      // 🆕 使用 debounced 版本
-      if (this.debouncedOutboundCall) {
-        await this.debouncedOutboundCall(broadcastWs);
+      // 使用 throttle 版本
+      if (this.throttledOutboundCall) {
+        await this.throttledOutboundCall(broadcastWs, null, true, true);
       }
       
       // 啟動空閒檢查定時器
@@ -1767,8 +1823,8 @@ export default class Project {
       setTimeout(async () => {
         logWithTimestamp(`🔄 延遲後觸發外撥邏輯 - 專案: ${this.projectId}`);
         // 🆕 使用 debounced 版本
-        if (this.debouncedOutboundCall) {
-          await this.debouncedOutboundCall(this.broadcastWsRef);
+        if (this.throttledOutboundCall) {
+          await this.throttledOutboundCall(this.broadcastWsRef, null, true, true);
         }
       }, randomDelay);
       

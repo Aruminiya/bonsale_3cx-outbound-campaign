@@ -1,6 +1,8 @@
 import axios, { AxiosError } from 'axios';
 import dotenv from 'dotenv';
 
+import { Participant } from '@/types/3CX/callControl';
+
 dotenv.config();
 
 const host = process.env.HTTP_HOST_3CX;
@@ -79,7 +81,7 @@ export async function hangupCall(token: string, dn: string, id: string) {
     );
 
     console.log('成功 掛斷電話請求:', response.data);
-    return response.data; // 返回成功
+    return { success: true , data: response.data }; // 返回成功
   } catch (error: unknown) {
     const axiosError = error as AxiosError;
     console.error('Error hangupCall request:', axiosError.message);
@@ -189,7 +191,30 @@ export async function getParticipants(token: string, dn: string) {
       },
     });
 
-    return response.data; // 返回成功
+    return { success: true, data: response.data }; // 返回成功
+  } catch (error: unknown) {
+    const axiosError = error as AxiosError;
+    console.error('Error getParticipants request:', axiosError.message);
+    return {
+      success: false,
+      error: {
+        errorCode: axiosError.response?.status?.toString() || '500',
+        error: `Error getParticipants request: ${axiosError.message}`,
+      },
+    }; // 返回錯誤
+  }
+}
+
+// 獲取單一參與者資訊
+export async function getParticipant(token: string, fullEndpoint:string, dn?: string, id?: string) {
+  try {
+    const response = await axios.get(fullEndpoint ? host + fullEndpoint : `${host}/callcontrol/${dn}/participants/${id}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    return { success: true, data: response.data as Participant }; // 返回成功
   } catch (error: unknown) {
     const axiosError = error as AxiosError;
     console.error('Error getParticipants request:', axiosError.message);

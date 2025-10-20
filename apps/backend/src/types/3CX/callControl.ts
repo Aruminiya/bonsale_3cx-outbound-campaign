@@ -1,0 +1,20 @@
+export interface Participant {
+    id: number,
+    status: string,
+    dn: string,
+    party_caller_name: string,
+    party_dn: string,
+    party_caller_id: string,
+    party_did: string,
+    device_id: string,
+    party_dn_type: string,
+    direct_control: boolean,
+    originated_by_dn: string,
+    originated_by_type: string,
+    referred_by_dn: string,
+    referred_by_type: string,
+    on_behalf_of_dn: string,
+    on_behalf_of_type: string,
+    callid: number,
+    legid: number
+}
