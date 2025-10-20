@@ -750,6 +750,8 @@ export default class Project {
 
     // 檢查是否有 recurrence 排程
     if (this.recurrence) {
+      // TODO 跟 Victor 確認時區問題 決定前端要 UTC - 8
+      // 所以我這邊就不用轉換 
       const isInSchedule = isTodayInSchedule(this.recurrence);
       if (!isInSchedule) {
         warnWithTimestamp(`今天不在 recurrence 排程內，跳過外撥`);
@@ -760,8 +762,10 @@ export default class Project {
 
     // 檢查是否有 callRestriction 限制撥打時間
     if (this.callRestriction && this.callRestriction.length > 0) {
+      // TODO 跟 Victor 確認時區問題 決定前端要 UTC - 8
+      // 所以我這邊就不用轉換 
       const now = new Date();
-      // 將時間轉換為 UTC+8 (台北時間)
+      // // 將時間轉換為 UTC+8 (台北時間)
       now.setHours(now.getUTCHours() + 8);
 
       // 檢查當前時間是否在任何一個限制時間範圍內
