@@ -765,6 +765,15 @@ export default class Project {
   private async executeOutboundCalls(eventEntity: string | null, isInitCall: boolean): Promise<void> {
     // 🔒 使用 Mutex 保護整個方法，確保初始撨號和 WebSocket 事件序列化執行
     // 避免 TOCTOU (Time-of-Check-Time-of-Use) 競態條件
+    // TODO: 好像不能這樣做
+    // 現在會有一個問題是 當 對方掛斷的太快 ws 給我的 entity 會失效 失效又會給我一個掛斷的 entity
+    // 但舊的 entity 也已經失效了 這樣我去呼叫 /callcontrol/{dnnumber}/participants/{id}/stream 系統會以為有兩個掛斷事件
+    // 導致撈兩個名單來撥打
+
+    // 跟 同事 (PY) 討論 決定先 WS 一有事件 就先去叫 /callcontrol/{dnnumber}/participants/{id}/stream
+    // 這樣我就可以及時地抓到 當下他撥打的狀態 把這個當下的狀態 帶入後續流程
+    // 這樣 也許可以解決 在 Mutex 排隊時  participants 失效的問題 
+    // 因為我已經保存好他失效前的 資料狀態
     await this.processCallerMutex.runExclusive(async () => {
       // 檢查是否有分機
       if (!this.caller || this.caller.length === 0) {
