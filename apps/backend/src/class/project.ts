@@ -947,10 +947,9 @@ export default class Project {
       errorWithTimestamp('分機或設備 ID 未定義，無法進行外撥處理');
       return;
     }
-    // 🔒 使用全域 Mutex 保護整個臨界區段
-    await this.processCallerMutex.runExclusive(async () => {
-      logWithTimestamp(`🔒 分機 ${dn} 獲得 Mutex 鎖`);
-      try {
+    // 注意：Mutex 保護已移到 executeOutboundCalls 外層
+    // 該方法已被 executeOutboundCalls 的 Mutex 保護，無需重複加鎖（避免嵌套死鎖）
+    try {
         // 從 Redis 獲取下一個要撥打的電話號碼
         const nextCallItem = await CallListManager.getNextCallItem(this.projectId);
 
@@ -1089,8 +1088,7 @@ export default class Project {
         const errorMsg = `處理分機 ${dn} 外撥時發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
         await this.setError(errorMsg);
         errorWithTimestamp(`處理分機 ${dn} 外撥時發生錯誤:`, error);
-      } 
-    });
+      }
   }
 
   /**
