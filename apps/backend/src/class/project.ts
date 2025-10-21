@@ -1780,8 +1780,8 @@ export default class Project {
     if (hasIdleExtension) {
       logWithTimestamp(`🔄 檢測到空閒分機，準備延遲觸發外撥邏輯 - 專案: ${this.projectId}`);
       
-      // 添加隨機延遲（2-5秒），避免多個定時器同時觸發造成的競態條件
-      const randomDelay = Math.random() * 3000 + 2000; // 2000-5000ms 的隨機延遲
+      // 添加隨機延遲（4-6秒），避免多個定時器同時觸發造成的競態條件
+      const randomDelay = Math.random() * 2000 + 4000; // 4000-6000ms 的隨機延遲
       
       setTimeout(async () => {
         logWithTimestamp(`🔄 延遲後觸發外撥邏輯 - 專案: ${this.projectId}`);
