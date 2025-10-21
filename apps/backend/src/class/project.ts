@@ -613,8 +613,8 @@ export default class Project {
       // 步驟三: 獲取並更新 caller 資訊
       await this.updateCallerInfo();
 
-      // 步驟四: 更新當前撥打記錄的狀態
-      await this.updateLatestCallRecordStatus();
+      // 步驟四: 更新當前撥打記錄的狀態（使用 Mutex 保護，確保與 processCallerOutbound 同步）
+      await this.updateLatestCallRecordStatusWithLock();
 
       // 步驟五: 廣播專案資訊
       if (broadcastWs) {
@@ -680,7 +680,25 @@ export default class Project {
   }
 
   /**
-   * 更新當前撥打記錄的狀態
+   * 使用 Mutex 保護的更新當前撥打記錄狀態
+   * 確保與 processCallerOutbound 的操作同步，避免 race condition
+   * @private
+   */
+  private async updateLatestCallRecordStatusWithLock(): Promise<void> {
+    try {
+      await this.processCallerMutex.runExclusive(async () => {
+        logWithTimestamp(`🔒 獲得 Mutex 鎖以更新撥打記錄狀態`);
+        await this.updateLatestCallRecordStatus();
+        logWithTimestamp(`🔓 釋放 Mutex 鎖`);
+      });
+    } catch (error) {
+      errorWithTimestamp('使用 Mutex 更新撥打記錄狀態失敗:', error);
+      // 不拋出錯誤，避免影響主要流程
+    }
+  }
+
+  /**
+   * 更新當前撥打記錄的狀態（內部方法，應由 updateLatestCallRecordStatusWithLock 調用）
    * @private
    */
   private async updateLatestCallRecordStatus(): Promise<void> {
@@ -698,17 +716,17 @@ export default class Project {
 
         // 找到對應的分機資訊
         const callerInfo = this.caller.find(caller => caller.dn === currentCall.dn);
-        
+
         if (callerInfo && callerInfo.participants && callerInfo.participants.length > 0) {
           const participant = callerInfo.participants[0];
           const newStatus = participant.status;
-          
+
           // 如果狀態有變化，更新
           if (currentCall.status !== newStatus) {
             const oldStatus = currentCall.status;
             this.latestCallRecord[i] = { ...currentCall, status: newStatus };
             hasUpdate = true;
-            
+
             logWithTimestamp(`撥打狀態更新 - 分機: ${currentCall.dn}, 客戶: ${currentCall.memberName}, 狀態: ${oldStatus} -> ${newStatus}`);
           }
         }

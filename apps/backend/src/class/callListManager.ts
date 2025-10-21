@@ -118,6 +118,7 @@ export class CallListManager {
 
   /**
    * 通話結束後移除使用過的撥號名單項目（在 recordBonsaleCallResult 後調用）
+   * 使用 Redis Lua 腳本實現原子性，避免多個進程同時刪除同一項目
    * @param projectId 專案 ID
    * @param customerId 客戶 ID
    * @returns Promise<boolean> 是否成功移除
@@ -125,22 +126,27 @@ export class CallListManager {
   static async removeUsedCallListItem(projectId: string, customerId: string): Promise<boolean> {
     try {
       const callListKey = this.getCallListKey(projectId);
-      
-      // 檢查項目是否存在
-      const exists = await redisClient.hExists(callListKey, customerId);
-      if (!exists) {
-        logWithTimestamp(`⚠️ 使用過的撥號名單項目不存在 - 專案: ${projectId}, 客戶: ${customerId}`);
-        return false;
-      }
 
-      // 刪除 hash field
-      const deletedCount = await redisClient.hDel(callListKey, customerId);
-      
-      if (deletedCount > 0) {
+      // 🔒 使用 Lua 腳本實現原子性操作
+      // 腳本功能：檢查項目是否存在，如果存在則刪除，並原子地返回結果
+      const luaScript = `
+        if redis.call('hexists', KEYS[1], ARGV[1]) == 1 then
+          return redis.call('hdel', KEYS[1], ARGV[1])
+        else
+          return 0
+        end
+      `;
+
+      const result = await redisClient.eval(luaScript, {
+        keys: [callListKey],
+        arguments: [customerId]
+      }) as number;
+
+      if (result > 0) {
         logWithTimestamp(`🗑️ 成功移除使用過的撥號名單項目 - 專案: ${projectId}, 客戶: ${customerId}`);
         return true;
       } else {
-        errorWithTimestamp(`❌ 移除使用過的撥號名單項目失敗，Redis 刪除操作未成功 - 專案: ${projectId}, 客戶: ${customerId} (預期刪除1個項目，實際刪除${deletedCount}個)`);
+        logWithTimestamp(`⚠️ 使用過的撥號名單項目不存在或已被移除 - 專案: ${projectId}, 客戶: ${customerId}`);
         return false;
       }
     } catch (error) {
