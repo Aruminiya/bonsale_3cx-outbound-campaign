@@ -763,168 +763,176 @@ export default class Project {
    * @private
    */
   private async executeOutboundCalls(eventEntity: string | null, isInitCall: boolean): Promise<void> {
-    // 檢查是否有分機
-    if (!this.caller || this.caller.length === 0) {
-      errorWithTimestamp('當前專案沒有分機');
-      return;
-    }
-
-    // 檢查是否有 recurrence 排程
-    if (this.recurrence) {
-      // TODO 跟 Victor 確認時區問題 決定前端要 UTC - 8
-      // 所以我這邊就不用轉換 
-      const isInSchedule = isTodayInSchedule(this.recurrence);
-      if (!isInSchedule) {
-        warnWithTimestamp(`今天不在 recurrence 排程內，跳過外撥`);
-        this.setWarning('今天不在排程內，暫停外撥');
+    // 🔒 使用 Mutex 保護整個方法，確保初始撨號和 WebSocket 事件序列化執行
+    // 避免 TOCTOU (Time-of-Check-Time-of-Use) 競態條件
+    await this.processCallerMutex.runExclusive(async () => {
+      // 檢查是否有分機
+      if (!this.caller || this.caller.length === 0) {
+        errorWithTimestamp('當前專案沒有分機');
         return;
       }
-    }
 
-    // 檢查是否有 callRestriction 限制撥打時間
-    if (this.callRestriction && this.callRestriction.length > 0) {
-      // TODO 跟 Victor 確認時區問題 決定前端要 UTC - 8
-      // 所以我這邊就不用轉換 
-      const now = new Date();
-      // // 將時間轉換為 UTC+8 (台北時間)
-      now.setHours(now.getUTCHours() + 8);
+      // 檢查是否有 recurrence 排程
+      if (this.recurrence) {
+        // TODO 跟 Victor 確認時區問題 決定前端要 UTC - 8
+        // 所以我這邊就不用轉換 
+        const isInSchedule = isTodayInSchedule(this.recurrence);
+        if (!isInSchedule) {
+          warnWithTimestamp(`今天不在 recurrence 排程內，跳過外撥`);
+          this.setWarning('今天不在排程內，暫停外撥');
+          return;
+        }
+      }
 
-      // 檢查當前時間是否在任何一個限制時間範圍內
-      const isInRestrictedTime = this.callRestriction.some(restriction => {
-        const startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(restriction.startTime.split(':')[0]), Number(restriction.startTime.split(':')[1]));
-        const stopTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(restriction.stopTime.split(':')[0]), Number(restriction.stopTime.split(':')[1]));
-        return now >= startTime && now <= stopTime;
-      })
+      // 檢查是否有 callRestriction 限制撥打時間
+      if (this.callRestriction && this.callRestriction.length > 0) {
+        // TODO 跟 Victor 確認時區問題 決定前端要 UTC - 8
+        // 所以我這邊就不用轉換 
+        const now = new Date();
+        // // 將時間轉換為 UTC+8 (台北時間)
+        now.setHours(now.getUTCHours() + 8);
 
-      if (isInRestrictedTime) {
-        warnWithTimestamp(`當前時間在限制撥打時間內，跳過外撥`);
-        this.setWarning('當前時間在限制撥打時間內，暫停外撥');
+        // 檢查當前時間是否在任何一個限制時間範圍內
+        const isInRestrictedTime = this.callRestriction.some(restriction => {
+          const startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(restriction.startTime.split(':')[0]), Number(restriction.startTime.split(':')[1]));
+          const stopTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(restriction.stopTime.split(':')[0]), Number(restriction.stopTime.split(':')[1]));
+          return now >= startTime && now <= stopTime;
+        })
+
+        if (isInRestrictedTime) {
+          warnWithTimestamp(`當前時間在限制撥打時間內，跳過外撥`);
+          this.setWarning('當前時間在限制撥打時間內，暫停外撥');
+          return;
+        }
+      }
+
+      if (!this.access_token) {
+        logWithTimestamp(`無效的 access_token，跳過分外撥`);
+        this.setError('無效的 access_token，無法進行外撥');
         return;
       }
-    }
 
-    if (!this.access_token) {
-      logWithTimestamp(`無效的 access_token，跳過分外撥`);
-      this.setError('無效的 access_token，無法進行外撥');
-      return;
-    }
+      // 檢查是否為初始撥號
+      if (isInitCall) {
+        logWithTimestamp(`初始撥號，開始對所有分機進行外撥檢查`);
+        // 遍歷所有分機進行外撥 (使用 for 循環確保順序執行)
+        // 只有最一開始的初始撥號 才能 使用 this.caller 來遍歷所有分機 
+        // 之後的外撥事件 都是針對單一分機進行處理
+        // 否則會導致競態競爭
 
-    // 檢查是否為初始撥號
-    if (isInitCall) {
-      logWithTimestamp(`初始撥號，開始對所有分機進行外撥檢查`);
-      // 遍歷所有分機進行外撥 (使用 for 循環確保順序執行)
-      // 只有最一開始的初始撥號 才能 使用 this.caller 來遍歷所有分機 
-      // 之後的外撥事件 都是針對單一分機進行處理
-      // 否則會導致競態競爭
-      for (const caller of this.caller) {
-        try {
-          // 檢查代理人用戶是否忙碌
-          if (!this.access_token) {
-            logWithTimestamp(`無效的 access_token，跳過分機 ${caller.dn} 的外撥`);
-            continue;
+        // 🔒 製作快照防止迭代中修改
+        const callerSnapshot = [...this.caller];
+        for (const caller of callerSnapshot) {
+          try {
+            // 檢查代理人用戶是否忙碌
+            if (!this.access_token) {
+              logWithTimestamp(`無效的 access_token，跳過分機 ${caller.dn} 的外撥`);
+              continue;
+            }
+
+            // 檢查是否有進行中的通話
+            const participants = caller.participants;
+            if (participants && participants.length > 0) {
+              logWithTimestamp(`分機 ${caller.dn} 有 ${participants.length} 個通話中，跳過外撥`);
+              continue;
+            }
+            
+            const agentUser = await getUsers(this.access_token, caller.dn);
+            if (!agentUser.success) {
+              logWithTimestamp(`無法獲取分機 ${caller.dn} 的代理人用戶資訊，跳過外撥`);
+              continue;
+            }
+            const CurrentProfileName = agentUser.data.value[0]?.CurrentProfileName;
+            if (CurrentProfileName) {
+              const isAgentUserBusy = CurrentProfileName !== "Available";
+              if (isAgentUserBusy) {
+                logWithTimestamp(`分機 ${caller.dn} 的代理人用戶忙碌，跳過外撥`);
+                continue;
+              }
+            }
+            
+            // 代理人可用，執行外撥邏輯
+            await this.processCallerOutbound(caller.dn, caller.devices[0].device_id);
+            
+            // 🆕 在處理下一個分機前添加延遲，給 API 和 WebSocket 一些反應時間
+            // 使用快照長度而非 this.caller.length，避免 this.caller 被修改時的不一致
+            const currentIndex = callerSnapshot.indexOf(caller);
+            if (currentIndex < callerSnapshot.length - 1) {
+              logWithTimestamp(`⏳ 處理完分機 ${caller.dn}，等待 1000ms 後處理下一個分機`);
+              await this.delay(1000); // 1000ms 延遲
+            }
+            
+          } catch (callerError) {
+            errorWithTimestamp(`處理分機 ${caller.dn} 初始外撥時發生錯誤:`, callerError);
+            // 繼續處理下一個分機
           }
+        }
+      } else {
+        // 非初始撥號，只處理單一分機
+        if (!eventEntity) {
+          logWithTimestamp(`無效的事件實體，跳過外撥`);
+          this.setError('無效的事件實體，無法進行外撥');
+          return;
+        }
 
-          // 檢查是否有進行中的通話
-          const participants = caller.participants;
+        const participant = await getParticipant(this.access_token, eventEntity);
+        if (!participant.success) {
+          logWithTimestamp(`無法獲取事件實體 ${eventEntity} 這邊可能是對方掛斷了`);
+          // 這邊可能是對方掛斷了
+          // 解析 eventEntity 來獲取分機資訊
+          const eventEntity_dn = eventEntity.split('/')[2]; // 格式固定為 /callcontrol/{dnnumber}/participants/{id}
+
+          // 檢查代理人用戶是否空閒了
+          const callControls = await getCaller(this.access_token);
+          if (!callControls.success) {
+            errorWithTimestamp(`無法獲取事件實體 ${eventEntity} 的呼叫控制資訊，跳過外撥`);
+            this.setError(`無法獲取事件實體 ${eventEntity} 的呼叫控制資訊，跳過外撥`);
+            return;
+          }
+          const callControl = callControls.data.find((caller: Caller) => caller.dn === eventEntity_dn);
+          if (!callControl) {
+            errorWithTimestamp(`無法在呼叫控制清單中找到分機 ${eventEntity_dn}，跳過外撥`);
+            this.setError(`無法在呼叫控制清單中找到分機 ${eventEntity_dn}，跳過外撥`);
+            return;
+          }
+          const participants = callControl.participants;
           if (participants && participants.length > 0) {
-            logWithTimestamp(`分機 ${caller.dn} 有 ${participants.length} 個通話中，跳過外撥`);
-            continue;
+            warnWithTimestamp(`分機 ${eventEntity_dn} 仍有參與者，代理人用戶可能仍忙碌，跳過外撥`);
+            this.setWarning(`分機 ${eventEntity_dn} 仍有參與者，代理人用戶可能仍忙碌，跳過外撥`);
+            return;
           }
           
-          const agentUser = await getUsers(this.access_token, caller.dn);
+          // 檢查代理人用戶是否忙碌
+          const agentUser = await getUsers(this.access_token, eventEntity_dn);
           if (!agentUser.success) {
-            logWithTimestamp(`無法獲取分機 ${caller.dn} 的代理人用戶資訊，跳過外撥`);
-            continue;
+            errorWithTimestamp(`無法獲取分機 ${eventEntity_dn} 的代理人用戶資訊，跳過外撥`);
+            this.setError(`無法獲取分機 ${eventEntity_dn} 的代理人用戶資訊，跳過外撥`);
+            return;
           }
           const CurrentProfileName = agentUser.data.value[0]?.CurrentProfileName;
           if (CurrentProfileName) {
             const isAgentUserBusy = CurrentProfileName !== "Available";
             if (isAgentUserBusy) {
-              logWithTimestamp(`分機 ${caller.dn} 的代理人用戶忙碌，跳過外撥`);
-              continue;
+              warnWithTimestamp(`分機 ${eventEntity_dn} 的代理人用戶忙碌，跳過外撥`);
+              this.setWarning(`分機 ${eventEntity_dn} 的代理人用戶忙碌，跳過外撥`);
+              return;
             }
           }
-          
+
           // 代理人可用，執行外撥邏輯
-          await this.processCallerOutbound(caller.dn, caller.devices[0].device_id);
-          
-          // 🆕 在處理下一個分機前添加延遲，給 API 和 WebSocket 一些反應時間
-          const currentIndex = this.caller.indexOf(caller);
-          if (currentIndex < this.caller.length - 1) {
-            logWithTimestamp(`⏳ 處理完分機 ${caller.dn}，等待 1000ms 後處理下一個分機`);
-            await this.delay(1000); // 1000ms 延遲
-          }
-          
-        } catch (callerError) {
-          errorWithTimestamp(`處理分機 ${caller.dn} 初始外撥時發生錯誤:`, callerError);
-          // 繼續處理下一個分機
-        }
-      }
-    } else {
-      // 非初始撥號，只處理單一分機
-      if (!eventEntity) {
-        logWithTimestamp(`無效的事件實體，跳過外撥`);
-        this.setError('無效的事件實體，無法進行外撥');
-        return;
-      }
-
-      const participant = await getParticipant(this.access_token, eventEntity);
-      if (!participant.success) {
-        logWithTimestamp(`無法獲取事件實體 ${eventEntity} 這邊可能是對方掛斷了`);
-        // 這邊可能是對方掛斷了
-        // 解析 eventEntity 來獲取分機資訊
-        const eventEntity_dn = eventEntity.split('/')[2]; // 格式固定為 /callcontrol/{dnnumber}/participants/{id}
-
-        // 檢查代理人用戶是否空閒了
-        // const callControls = await getCaller(this.access_token);
-        // if (!callControls.success) {
-        //   errorWithTimestamp(`無法獲取事件實體 ${eventEntity} 的呼叫控制資訊，跳過外撥`);
-        //   this.setError(`無法獲取事件實體 ${eventEntity} 的呼叫控制資訊，跳過外撥`);
-        //   return;
-        // }
-        const callControl = this.caller.find((caller: Caller) => caller.dn === eventEntity_dn);
-        if (!callControl) {
-          errorWithTimestamp(`無法在呼叫控制清單中找到分機 ${eventEntity_dn}，跳過外撥`);
-          this.setError(`無法在呼叫控制清單中找到分機 ${eventEntity_dn}，跳過外撥`);
-          return;
-        }
-        const participants = callControl.participants;
-        if (participants && participants.length > 0) {
-          warnWithTimestamp(`分機 ${eventEntity_dn} 仍有參與者，代理人用戶可能仍忙碌，跳過外撥`);
-          this.setWarning(`分機 ${eventEntity_dn} 仍有參與者，代理人用戶可能仍忙碌，跳過外撥`);
-          return;
-        }
-        
-        // 檢查代理人用戶是否忙碌
-        const agentUser = await getUsers(this.access_token, eventEntity_dn);
-        if (!agentUser.success) {
-          errorWithTimestamp(`無法獲取分機 ${eventEntity_dn} 的代理人用戶資訊，跳過外撥`);
-          this.setError(`無法獲取分機 ${eventEntity_dn} 的代理人用戶資訊，跳過外撥`);
-          return;
-        }
-        const CurrentProfileName = agentUser.data.value[0]?.CurrentProfileName;
-        if (CurrentProfileName) {
-          const isAgentUserBusy = CurrentProfileName !== "Available";
-          if (isAgentUserBusy) {
-            warnWithTimestamp(`分機 ${eventEntity_dn} 的代理人用戶忙碌，跳過外撥`);
-            this.setWarning(`分機 ${eventEntity_dn} 的代理人用戶忙碌，跳過外撥`);
+          logWithTimestamp(`分機 ${eventEntity_dn} 的代理人用戶可用，繼續外撥流程`);
+          const currentDeviceId = callControl.devices[0]?.device_id;
+          await this.processCallerOutbound(eventEntity_dn, currentDeviceId);
+        } else {
+          logWithTimestamp(`成功獲取事件實體 ${eventEntity} 的參與者資訊:`, participant.data);
+          if (!participant.data) {
+            errorWithTimestamp(`參與者資料不完整, 無法進行外撥`);
+            this.setError(`參與者資料不完整, 無法進行外撥`);
             return;
           }
         }
-
-        // 代理人可用，執行外撥邏輯
-        logWithTimestamp(`分機 ${eventEntity_dn} 的代理人用戶可用，繼續外撥流程`);
-        const currentDeviceId = callControl.devices[0]?.device_id;
-        await this.processCallerOutbound(eventEntity_dn, currentDeviceId);
-      } else {
-        logWithTimestamp(`成功獲取事件實體 ${eventEntity} 的參與者資訊:`, participant.data);
-        if (!participant.data) {
-          errorWithTimestamp(`參與者資料不完整, 無法進行外撥`);
-          this.setError(`參與者資料不完整, 無法進行外撥`);
-          return;
-        }
       }
-    }
+    });
   }
 
   /**
