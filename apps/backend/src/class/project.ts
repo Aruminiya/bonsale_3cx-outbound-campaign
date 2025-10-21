@@ -7,7 +7,7 @@ import { ProjectManager } from '../class/projectManager';
 import { broadcastAllProjects } from '../components/broadcast';
 import { WebSocketManager } from './webSocketManager';
 import { TokenManager } from './tokenManager';
-import { CallListManager } from './callListManager'; 
+import { CallListManager } from './callListManager';
 import { getOutbound, updateCallStatus, updateDialUpdate, updateVisitRecord, updateBonsaleProjectAutoDialExecute } from '../services/api/bonsale';
 import { getUsers } from '../services/api/xApi';
 import { Outbound } from '../types/bonsale/getOutbound';
@@ -161,13 +161,13 @@ export default class Project {
     this.tokenManager = new TokenManager(client_id, client_secret, projectId, access_token);
 
     // 初始化 throttled WebSocket 訊息處理器 (100ms 內最多執行一次)
-    this.throttledMessageHandler = throttle(this.processWebSocketMessage.bind(this), 100, {
+    this.throttledMessageHandler = throttle(this.processWebSocketMessage.bind(this), 0, {
       leading: false,  // 第一次不立即執行
       trailing: true // 在等待期結束後執行
     });
 
-    // 🆕 初始化 throttle outboundCall 方法 (100ms 內最多執行一次)
-    this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 100, {
+    // 🆕 初始化 throttle outboundCall 方法 (300ms 內最多執行一次)
+    this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 300, {
       leading: false,   // 第一次不立即執行
       trailing: true  // 在等待期結束後執行
     });
@@ -537,6 +537,7 @@ export default class Project {
         case 0:
           logWithTimestamp(`狀態 ${eventType}:`, messageObject.event);
           if (this.throttledOutboundCall) {
+            // 使用 throttled 版本的 outboundCall
             await this.throttledOutboundCall(broadcastWs, eventEntity, false);
           }
           break;
@@ -547,10 +548,7 @@ export default class Project {
           if (this.state === 'stop') {
             await this.handleStopStateLogic(broadcastWs);
           } else {
-            // 🆕 使用 debounced 版本
-            if (this.throttledOutboundCall) {
-              await this.throttledOutboundCall(broadcastWs, eventEntity, true);
-            }
+            await this.outboundCall(broadcastWs, eventEntity, true);
           }
           break; 
         default:
@@ -572,6 +570,11 @@ export default class Project {
    */
   private async outboundCall(broadcastWs: WebSocketServer | undefined, eventEntity: string | null, isExecuteOutboundCalls: boolean = true, isInitCall: boolean = false): Promise<void> {
     try {
+      logWithTimestamp('執行 outboundCall 方法', {
+        eventEntity,
+        isExecuteOutboundCalls,
+        isInitCall
+      });
       // 清除之前的資訊提示（如果有的話）
       await this.clearErrorWarningInfo();
       
@@ -804,8 +807,9 @@ export default class Project {
           }
 
           // 檢查是否有進行中的通話
-          if (caller.participants && caller.participants.length > 0) {
-            logWithTimestamp(`分機 ${caller.dn} 有 ${caller.participants.length} 個通話中，跳過外撥`);
+          const participants = caller.participants;
+          if (participants && participants.length > 0) {
+            logWithTimestamp(`分機 ${caller.dn} 有 ${participants.length} 個通話中，跳過外撥`);
             continue;
           }
           
@@ -1065,7 +1069,7 @@ export default class Project {
       // 🚨 臨界區段結束：延遲釋放鎖（給 WebSocket 狀態更新一些時間）
       setTimeout(() => {
         this.releaseExtensionLock(dn);
-      }, 3000); // 3秒後釋放鎖
+      }, 1000); // 1秒後釋放鎖
     }
   }
 

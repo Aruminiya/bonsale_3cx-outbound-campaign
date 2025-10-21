@@ -140,7 +140,7 @@ export class CallListManager {
         logWithTimestamp(`🗑️ 成功移除使用過的撥號名單項目 - 專案: ${projectId}, 客戶: ${customerId}`);
         return true;
       } else {
-        logWithTimestamp(`❌ 移除使用過的撥號名單項目失敗 - 專案: ${projectId}, 客戶: ${customerId}`);
+        errorWithTimestamp(`❌ 移除使用過的撥號名單項目失敗，Redis 刪除操作未成功 - 專案: ${projectId}, 客戶: ${customerId} (預期刪除1個項目，實際刪除${deletedCount}個)`);
         return false;
       }
     } catch (error) {
@@ -326,7 +326,7 @@ export class CallListManager {
         logWithTimestamp(`🗑️ 已清空專案 ${projectId} 的撥號名單 (清空 ${countBefore} 筆記錄)`);
         return true;
       } else {
-        errorWithTimestamp(`❌ 清空專案 ${projectId} 撥號名單失敗`);
+        errorWithTimestamp(`❌ 清空專案 ${projectId} 撥號名單失敗，Redis 刪除操作未成功 (預期刪除1個key，實際刪除${result}個)`);
         return false;
       }
     } catch (error) {
