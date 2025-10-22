@@ -12,6 +12,7 @@ import { CallListManager } from './callListManager';
 import { getOutbound, updateCallStatus, updateDialUpdate, updateVisitRecord, updateBonsaleProjectAutoDialExecute } from '../services/api/bonsale';
 import { getUsers } from '../services/api/xApi';
 import { Outbound } from '../types/bonsale/getOutbound';
+import { Participant } from '@/types/3CX/callControl';
 import { post9000Dummy, post9000 } from '../services/api/insertOverdueMessageForAi';
 import { isTodayInSchedule } from '../util/iCalendar';
 
@@ -166,7 +167,7 @@ export default class Project {
       trailing: true // 在等待期結束後執行
     });
 
-    // 🆕 初始化 throttle outboundCall 方法 (300ms 內最多執行一次)
+    // 初始化 throttle outboundCall 方法 (300ms 內最多執行一次)
     this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 300, {
       leading: false,   // 第一次不立即執行
       trailing: true  // 在等待期結束後執行
@@ -591,7 +592,7 @@ export default class Project {
     eventEntity: string | null,
     isExecuteOutboundCalls: boolean = true,
     isInitCall: boolean = false,
-    participantSnapshot: any = null
+    participantSnapshot: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null = null
   ): Promise<void> {
     try {
       logWithTimestamp('執行 outboundCall 方法', {
@@ -785,16 +786,16 @@ export default class Project {
   /**
    * 執行外撥通話
    * @param eventEntity WebSocket 事件實體
-   * @param isInitCall 是否為初始撨號
+   * @param isInitCall 是否為初始撥號
    * @param participantSnapshot 快照的 participant 狀態（可選）
    * @private
    */
   private async executeOutboundCalls(
     eventEntity: string | null,
     isInitCall: boolean,
-    participantSnapshot: any = null
+    participantSnapshot: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null = null
   ): Promise<void> {
-    // 🔒 使用 Mutex 保護整個方法，確保初始撨號和 WebSocket 事件序列化執行
+    // 🔒 使用 Mutex 保護整個方法，確保初始撥號和 WebSocket 事件序列化執行
     // ✅ 改進：在 WebSocket 事件處理時立即捕獲 participant 快照
     // 這樣可以避免在 Mutex 排隊期間 entity 失效導致的問題
     await this.processCallerMutex.runExclusive(async () => {
