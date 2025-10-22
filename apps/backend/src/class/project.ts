@@ -524,7 +524,7 @@ export default class Project {
     try {
       // 將 Buffer 轉換為字符串
       const messageString = data.toString('utf8');
-      
+
       // 嘗試解析 JSON
       const messageObject: WsMessageObject = JSON.parse(messageString);
 
@@ -544,17 +544,35 @@ export default class Project {
         case 1:
           logWithTimestamp(`狀態 ${eventType}:`, messageObject.event);
 
+          // 🔑 立即捕獲當下的 participant 快照，避免在 Mutex 排隊期間 entity 失效
+          let participantSnapshot = null;
+          try {
+            if (eventEntity && this.access_token) {
+              const participantResult = await getParticipant(this.access_token, eventEntity);
+              if (participantResult.success) {
+                participantSnapshot = participantResult;
+                logWithTimestamp(`✅ 捕獲 participant 快照 - entity: ${eventEntity}`);
+              } else {
+                logWithTimestamp(`⚠️ 無法獲取 participant 快照 - 對方可能已掛斷: ${eventEntity}`);
+                participantSnapshot = participantResult; // 關鍵：即使失敗也保存 因為對方已掛斷
+              }
+            }
+          } catch (captureError) {
+            logWithTimestamp(`⚠️ 捕獲 participant 快照失敗:`, captureError);
+          }
+
           // 如果專案狀態是 stop，檢查是否還有活躍通話
           if (this.state === 'stop') {
             await this.handleStopStateLogic(broadcastWs);
           } else {
-            await this.outboundCall(broadcastWs, eventEntity, true);
+            // 將捕獲的快照傳入 outboundCall
+            await this.outboundCall(broadcastWs, eventEntity, true, false, participantSnapshot);
           }
-          break; 
+          break;
         default:
           logWithTimestamp('未知事件類型:', eventType);
       }
-      
+
     } catch (error) {
       // 如果不是 JSON 格式，直接記錄原始數據
       logWithTimestamp('3CX WebSocket 收到非JSON訊息:', data.toString('utf8'));
@@ -568,7 +586,13 @@ export default class Project {
    * @param updateCaller 是否更新 caller 資訊，預設為 true
    * @private
    */
-  private async outboundCall(broadcastWs: WebSocketServer | undefined, eventEntity: string | null, isExecuteOutboundCalls: boolean = true, isInitCall: boolean = false): Promise<void> {
+  private async outboundCall(
+    broadcastWs: WebSocketServer | undefined,
+    eventEntity: string | null,
+    isExecuteOutboundCalls: boolean = true,
+    isInitCall: boolean = false,
+    participantSnapshot: any = null
+  ): Promise<void> {
     try {
       logWithTimestamp('執行 outboundCall 方法', {
         eventEntity,
@@ -624,12 +648,12 @@ export default class Project {
       // 步驟六: 執行外撥邏輯
       // 是否初始撥號
       if (isInitCall) {
-        await this.executeOutboundCalls(eventEntity, true);
+        await this.executeOutboundCalls(eventEntity, true, participantSnapshot);
         return;
       }
       // 確認是否要撥號
       if (isExecuteOutboundCalls) {
-        await this.executeOutboundCalls(eventEntity, false);
+        await this.executeOutboundCalls(eventEntity, false, participantSnapshot);
         return;
       }
 
@@ -760,20 +784,19 @@ export default class Project {
 
   /**
    * 執行外撥通話
+   * @param eventEntity WebSocket 事件實體
+   * @param isInitCall 是否為初始撨號
+   * @param participantSnapshot 快照的 participant 狀態（可選）
    * @private
    */
-  private async executeOutboundCalls(eventEntity: string | null, isInitCall: boolean): Promise<void> {
+  private async executeOutboundCalls(
+    eventEntity: string | null,
+    isInitCall: boolean,
+    participantSnapshot: any = null
+  ): Promise<void> {
     // 🔒 使用 Mutex 保護整個方法，確保初始撨號和 WebSocket 事件序列化執行
-    // 避免 TOCTOU (Time-of-Check-Time-of-Use) 競態條件
-    // TODO: 好像不能這樣做
-    // 現在會有一個問題是 當 對方掛斷的太快 ws 給我的 entity 會失效 失效又會給我一個掛斷的 entity
-    // 但舊的 entity 也已經失效了 這樣我去呼叫 /callcontrol/{dnnumber}/participants/{id}/stream 系統會以為有兩個掛斷事件
-    // 導致撈兩個名單來撥打
-
-    // 跟 同事 (PY) 討論 決定先 WS 一有事件 就先去叫 /callcontrol/{dnnumber}/participants/{id}/stream
-    // 這樣我就可以及時地抓到 當下他撥打的狀態 把這個當下的狀態 帶入後續流程
-    // 這樣 也許可以解決 在 Mutex 排隊時  participants 失效的問題 
-    // 因為我已經保存好他失效前的 資料狀態
+    // ✅ 改進：在 WebSocket 事件處理時立即捕獲 participant 快照
+    // 這樣可以避免在 Mutex 排隊期間 entity 失效導致的問題
     await this.processCallerMutex.runExclusive(async () => {
       // 檢查是否有分機
       if (!this.caller || this.caller.length === 0) {
@@ -884,7 +907,19 @@ export default class Project {
           return;
         }
 
-        const participant = await getParticipant(this.access_token, eventEntity);
+        // 🔑 優先使用快照的 participant 狀態，避免重新查詢失效的 entity
+        let participant: any;
+        if (participantSnapshot) {
+          logWithTimestamp(`✅ 使用快照的 participant 狀態，避免 entity 失效問題`);
+          // 快照中可能包含成功的 participantResult 或失敗的 participantResult
+          // 兩者都需要傳入供後續邏輯判斷 (根據 success 標誌)
+          participant = participantSnapshot;
+        } else {
+          // 如果沒有快照，再進行查詢（通常是初始撨號的情況）
+          logWithTimestamp(`⚠️ 沒有快照，重新查詢 participant 狀態`);
+          participant = await getParticipant(this.access_token, eventEntity);
+        }
+
         if (!participant.success) {
           logWithTimestamp(`無法獲取事件實體 ${eventEntity} 這邊可能是對方掛斷了`);
           // 這邊可能是對方掛斷了
