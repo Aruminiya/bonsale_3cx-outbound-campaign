@@ -1630,8 +1630,14 @@ export default class Project {
       }
       
       // 啟動空閒檢查定時器
-      this.startIdleCheck(broadcastWs);
-      
+      const IS_STARTIDLECHECK = process.env.IS_STARTIDLECHECK;
+      if (IS_STARTIDLECHECK === 'true') {
+        logWithTimestamp(`🕰️ 啟動空閒檢查定時器 - 專案: ${this.projectId}`);
+        this.startIdleCheck(broadcastWs);
+      } else {
+        logWithTimestamp(`⏸️ 未啟動空閒檢查定時器（IS_STARTIDLECHECK=${IS_STARTIDLECHECK}） - 專案: ${this.projectId}`);
+      }
+
       logWithTimestamp(`✅ WebSocket ${context} - 初始化完成`);
     } catch (error) {
       errorWithTimestamp(`❌ WebSocket ${context}後初始化時發生錯誤:`, error);
