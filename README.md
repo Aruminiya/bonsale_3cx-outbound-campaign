@@ -1,3 +1,3 @@
 # bonsale-outbound-campaign-dashboard
 
-**Version: v0.0.4**
+**Version: v0.0.5**
