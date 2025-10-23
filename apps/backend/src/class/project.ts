@@ -103,7 +103,7 @@ export default class Project {
   private tokenManager: TokenManager;
   private throttledMessageHandler: DebouncedFunc<(broadcastWs: WebSocketServer, data: Buffer) => Promise<void>> | null = null;
   // 🆕 為 outboundCall 方法添加 debounce
-  private throttledOutboundCall: DebouncedFunc<(broadcastWs: WebSocketServer | undefined, eventEntity: string | null, isExecuteOutboundCalls?: boolean, isInitCall?: boolean) => Promise<void>> | null = null;
+  private throttledOutboundCall: DebouncedFunc<(broadcastWs: WebSocketServer | undefined, eventEntity: string | null, isExecuteOutboundCalls?: boolean, isInitCall?: boolean, participantSnapshot?: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null) => Promise<void>> | null = null;
   private idleCheckTimer: NodeJS.Timeout | null = null; // 空閒檢查定時器
   private idleCheckInterval: number = 30000; // 當前檢查間隔（毫秒）
   private readonly minIdleCheckInterval: number = 30000; // 最小檢查間隔 30 秒
@@ -168,6 +168,7 @@ export default class Project {
     });
 
     // 初始化 throttle outboundCall 方法 (300ms 內最多執行一次)
+    // TODO 卡住的問題可能問題在這邊
     this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 300, {
       leading: false,   // 第一次不立即執行
       trailing: true  // 在等待期結束後執行
@@ -537,9 +538,29 @@ export default class Project {
       switch (eventType) {
         case 0:
           logWithTimestamp(`狀態 ${eventType}:`, messageObject.event);
+          // ✅ 改進：在 WebSocket 事件處理時立即捕獲 participant 快照
+          // 這樣可以避免在 Mutex 排隊期間 entity 失效導致的問題
+
+          // 🔑 立即捕獲當下的 participant 快照，避免在 Mutex 排隊期間 entity 失效
+          let participantSnapshot0 = null;
+          try {
+            if (eventEntity && this.access_token) {
+              const participantResult = await getParticipant(this.access_token, eventEntity);
+              if (participantResult.success) {
+                participantSnapshot0 = participantResult;
+                logWithTimestamp(`✅ 捕獲 participant 快照 - entity: ${eventEntity}`);
+              } else {
+                logWithTimestamp(`⚠️ 無法獲取 participant 快照 - 對方可能已掛斷: ${eventEntity}`);
+                participantSnapshot0 = participantResult; // 關鍵：即使失敗也保存 因為對方已掛斷
+              }
+            }
+          } catch (captureError) {
+            logWithTimestamp(`⚠️ 捕獲 participant 快照失敗:`, captureError);
+          }
+
           if (this.throttledOutboundCall) {
-            // 使用 throttled 版本的 outboundCall
-            await this.throttledOutboundCall(broadcastWs, eventEntity, false);
+            // 使用 throttled 版本的 outboundCall，並傳入快照
+            await this.throttledOutboundCall(broadcastWs, eventEntity, false, false, participantSnapshot0);
           }
           break;
         case 1:
@@ -548,16 +569,16 @@ export default class Project {
           // 這樣可以避免在 Mutex 排隊期間 entity 失效導致的問題
 
           // 🔑 立即捕獲當下的 participant 快照，避免在 Mutex 排隊期間 entity 失效
-          let participantSnapshot = null;
+          let participantSnapshot1 = null;
           try {
             if (eventEntity && this.access_token) {
               const participantResult = await getParticipant(this.access_token, eventEntity);
               if (participantResult.success) {
-                participantSnapshot = participantResult;
+                participantSnapshot1 = participantResult;
                 logWithTimestamp(`✅ 捕獲 participant 快照 - entity: ${eventEntity}`);
               } else {
                 logWithTimestamp(`⚠️ 無法獲取 participant 快照 - 對方可能已掛斷: ${eventEntity}`);
-                participantSnapshot = participantResult; // 關鍵：即使失敗也保存 因為對方已掛斷
+                participantSnapshot1 = participantResult; // 關鍵：即使失敗也保存 因為對方已掛斷
               }
             }
           } catch (captureError) {
@@ -569,7 +590,7 @@ export default class Project {
             await this.handleStopStateLogic(broadcastWs);
           } else {
             // 將捕獲的快照傳入 outboundCall
-            await this.outboundCall(broadcastWs, eventEntity, true, false, participantSnapshot);
+            await this.outboundCall(broadcastWs, eventEntity, true, false, participantSnapshot1);
           }
           break;
         default:
