@@ -597,10 +597,15 @@ export default class Project {
     participantSnapshot: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null = null
   ): Promise<void> {
     // 🔒 使用 Mutex 保護整個方法，確保初始撥號和 WebSocket 事件序列化執行
+    const outboundCallStartTime = Date.now();
+    logWithTimestamp(`[🔴 outboundCall 嘗試獲取 Mutex] eventEntity: ${eventEntity}`);
 
     await this.processCallerMutex.runExclusive(async () => {
+      const mutexAcquiredTime = Date.now();
+      logWithTimestamp(`[🔴 outboundCall 已獲取 Mutex] 等待時間: ${mutexAcquiredTime - outboundCallStartTime}ms`);
+
       try {
-        logWithTimestamp('執行 outboundCall 方法', {
+        logWithTimestamp('[🔴 outboundCall 開始執行邏輯]', {
           eventEntity,
           isExecuteOutboundCalls,
           isInitCall
@@ -676,9 +681,12 @@ export default class Project {
             errorWithTimestamp('廣播錯誤資訊失敗:', broadcastError);
           }
         }
-        
+
         throw error;
       }
+
+      const mutexReleaseTime = Date.now();
+      logWithTimestamp(`[🔴 outboundCall Mutex 釋放] 總耗時: ${mutexReleaseTime - outboundCallStartTime}ms`);
     });
   }
 
@@ -783,6 +791,9 @@ export default class Project {
     isInitCall: boolean,
     participantSnapshot: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null = null
   ): Promise<void> {
+    const executeStartTime = Date.now();
+    logWithTimestamp(`[🟢 executeOutboundCalls 開始] eventEntity: ${eventEntity}, isInitCall: ${isInitCall}`);
+
     // 檢查是否有分機
     if (!this.caller || this.caller.length === 0) {
       errorWithTimestamp('當前專案沒有分機');
@@ -962,6 +973,8 @@ export default class Project {
       }
     }
 
+    const executeEndTime = Date.now();
+    logWithTimestamp(`[🟢 executeOutboundCalls 完成] 耗時: ${executeEndTime - executeStartTime}ms`);
   }
 
   /**
@@ -972,6 +985,9 @@ export default class Project {
    * @private
    */
   private async processCallerOutbound(dn: string, deviceId: string): Promise<void> {
+    const processStartTime = Date.now();
+    logWithTimestamp(`[🔵 processCallerOutbound 開始] dn: ${dn}, deviceId: ${deviceId}`);
+
     if (!dn || !deviceId) {
       errorWithTimestamp('分機或設備 ID 未定義，無法進行外撥處理');
       return;
@@ -980,7 +996,11 @@ export default class Project {
     // 該方法已被 executeOutboundCalls 的 Mutex 保護，無需重複加鎖（避免嵌套死鎖）
     try {
         // 從 Redis 獲取下一個要撥打的電話號碼
+        logWithTimestamp(`[🔵 processCallerOutbound] 準備從 Redis 取得下一通電話...`);
+        const getNextCallStartTime = Date.now();
         const nextCallItem = await CallListManager.getNextCallItem(this.projectId);
+        const getNextCallEndTime = Date.now();
+        logWithTimestamp(`[🔵 processCallerOutbound] 從 Redis 取得下一通電話完成，耗時: ${getNextCallEndTime - getNextCallStartTime}ms`);
 
         // 檢查並補充撥號名單（如果數量不足）
         await this.checkAndReplenishCallList();
@@ -1114,10 +1134,13 @@ export default class Project {
           await this.makeOutboundCall(dn, deviceId, null, 2000);
         }
       } catch (error) {
-        const errorMsg = `處理分機 ${dn} 外撥時發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
+        const errorMsg = `[🔵 processCallerOutbound] 處理分機 ${dn} 外撥時發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
         await this.setError(errorMsg);
-        errorWithTimestamp(`處理分機 ${dn} 外撥時發生錯誤:`, error);
+        errorWithTimestamp(errorMsg, error);
       }
+
+      const processEndTime = Date.now();
+      logWithTimestamp(`[🔵 processCallerOutbound 完成] dn: ${dn}, 耗時: ${processEndTime - processStartTime}ms`);
   }
 
   /**
@@ -1129,13 +1152,16 @@ export default class Project {
    * @private
    */
   private async makeOutboundCall(dn: string, deviceId: string, targetNumber: string | null, delayMs: number = 1000): Promise<void> {
+    const makeCallStartTime = Date.now();
+    logWithTimestamp(`[🟡 makeOutboundCall 開始] dn: ${dn}, targetNumber: ${targetNumber}`);
+
     try {
       if (!this.access_token) {
         throw new Error('access_token 為空');
       }
 
       // 添加延遲
-      logWithTimestamp(`等待 ${delayMs}ms 後撥打電話: ${dn} -> ${targetNumber}`);
+      logWithTimestamp(`[🟡 makeOutboundCall] 等待 ${delayMs}ms 後撥打電話: ${dn} -> ${targetNumber}`);
       await this.delay(delayMs);
 
       if (this.previousCallRecord && this.previousCallRecord.length > 0) {
@@ -1145,8 +1171,11 @@ export default class Project {
           const previousCallForThisExtension = this.previousCallRecord[previousCallIndex];
           if (previousCallForThisExtension) {
             // 有該分機的前一筆撥打記錄，執行寫紀錄到 Bonsale 裡面
-            logWithTimestamp(`處理分機 ${dn} 的前一筆撥打記錄 - 客戶: ${previousCallForThisExtension.memberName} (${previousCallForThisExtension.customerId})`);
+            logWithTimestamp(`[🟡 makeOutboundCall] 準備記錄前一通電話結果 - 客戶: ${previousCallForThisExtension.memberName} (${previousCallForThisExtension.customerId})`);
+            const recordStartTime = Date.now();
             await this.recordBonsaleCallResult(previousCallForThisExtension);
+            const recordEndTime = Date.now();
+            logWithTimestamp(`[🟡 makeOutboundCall] 記錄前一通電話結果完成，耗時: ${recordEndTime - recordStartTime}ms`);
             
             // 處理完成後，從 previousCallRecord 中移除該記錄，避免重複處理
             this.previousCallRecord.splice(previousCallIndex, 1);
@@ -1155,17 +1184,25 @@ export default class Project {
         }
       }
       if (!targetNumber) {
-        logWithTimestamp(`分機 ${dn} 無撥號名單，跳過撥打`);
+        logWithTimestamp(`[🟡 makeOutboundCall] 分機 ${dn} 無撥號名單，跳過撥打`);
         return;
       }
 
       // 發起外撥
+      logWithTimestamp(`[🟡 makeOutboundCall] 準備發起外撥: ${dn} -> ${targetNumber}`);
+      const callStartTime = Date.now();
       await makeCall(this.access_token, dn, deviceId, "outbound", targetNumber);
-      logWithTimestamp(`成功發起外撥: ${dn} -> ${targetNumber}`);
+      const callEndTime = Date.now();
+      logWithTimestamp(`[🟡 makeOutboundCall] 成功發起外撥，耗時: ${callEndTime - callStartTime}ms - ${dn} -> ${targetNumber}`);
+
+      const makeCallEndTime = Date.now();
+      logWithTimestamp(`[🟡 makeOutboundCall 完成] 總耗時: ${makeCallEndTime - makeCallStartTime}ms`);
     } catch (error) {
       const errorMsg = `外撥失敗 ${dn} -> ${targetNumber}: ${error instanceof Error ? error.message : String(error)}`;
       await this.setError(errorMsg);
-      errorWithTimestamp(`外撥失敗 ${dn} -> ${targetNumber}:`, error);
+      errorWithTimestamp(`[🟡 makeOutboundCall] 外撥失敗 ${dn} -> ${targetNumber}:`, error);
+      const makeCallEndTime = Date.now();
+      logWithTimestamp(`[🟡 makeOutboundCall 失敗] 總耗時: ${makeCallEndTime - makeCallStartTime}ms`);
       throw error;
     }
   }
@@ -1211,13 +1248,16 @@ export default class Project {
    * @private
    */
   private async recordBonsaleCallResult(previousCallRecord: CallRecord): Promise<void> {
+    const recordStartTime = Date.now();
+    logWithTimestamp(`[🟢 recordBonsaleCallResult 開始] 客戶: ${previousCallRecord?.memberName} (${previousCallRecord?.customerId}), 分機: ${previousCallRecord?.dn}`);
+
     try {
       // 這裡可以根據當前的 caller 狀態來判斷前一通電話的通話結果
       if (!previousCallRecord) {
         warnWithTimestamp('沒有前一筆撥打記錄可供寫入 Bonsale');
         return;
       }
-      logWithTimestamp(`準備記錄 Bonsale 通話結果 - 客戶: ${previousCallRecord.memberName} (${previousCallRecord.customerId}), 分機: ${previousCallRecord.dn}`);
+      logWithTimestamp(`[🟢 recordBonsaleCallResult] 準備記錄 Bonsale 通話結果 - 客戶: ${previousCallRecord.memberName} (${previousCallRecord.customerId}), 分機: ${previousCallRecord.dn}`);
       
       // 獲取該分機的當前狀態來判斷前一通電話的結果
       const { status } = previousCallRecord;
@@ -1400,21 +1440,26 @@ export default class Project {
       }
 
     } catch (error) {
-      const errorMsg = `記錄 Bonsale 通話結果失敗: ${error instanceof Error ? error.message : String(error)}`;
+      const errorMsg = `[🟢 recordBonsaleCallResult] 記錄 Bonsale 通話結果失敗: ${error instanceof Error ? error.message : String(error)}`;
       await this.setError(errorMsg);
-      errorWithTimestamp('記錄 Bonsale 通話結果失敗:', error);
+      errorWithTimestamp(errorMsg, error);
 
       // 即使發生錯誤，也要移除使用過的撥號名單項目，避免名單殘存
       if (previousCallRecord) {
         try {
           await CallListManager.removeUsedCallListItem(previousCallRecord.projectId, previousCallRecord.customerId);
-          logWithTimestamp(`🗑️ 已移除異常處理中的撥號名單項目 - 專案: ${previousCallRecord.projectId}, 客戶: ${previousCallRecord.customerId}`);
+          logWithTimestamp(`[🟢 recordBonsaleCallResult] 🗑️ 已移除異常處理中的撥號名單項目 - 專案: ${previousCallRecord.projectId}, 客戶: ${previousCallRecord.customerId}`);
         } catch (removeError) {
-          errorWithTimestamp(`❌ 移除異常處理中撥號名單項目時發生錯誤: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
+          errorWithTimestamp(`[🟢 recordBonsaleCallResult] ❌ 移除異常處理中撥號名單項目時發生錯誤:`, removeError);
         }
       }
+      const recordEndTime = Date.now();
+      logWithTimestamp(`[🟢 recordBonsaleCallResult 失敗] 耗時: ${recordEndTime - recordStartTime}ms`);
       // 不拋出錯誤，避免影響主要的外撥流程
     }
+
+    const recordEndTime = Date.now();
+    logWithTimestamp(`[🟢 recordBonsaleCallResult 完成] 耗時: ${recordEndTime - recordStartTime}ms`);
   }
 
   /**
