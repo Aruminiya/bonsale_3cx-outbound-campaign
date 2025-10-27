@@ -560,7 +560,11 @@ export default class Project {
 
           if (this.throttledOutboundCall) {
             // 使用 throttled 版本的 outboundCall，並傳入快照
-            await this.throttledOutboundCall(broadcastWs, eventEntity, false, false, participantSnapshot0);
+            // 注意：不 await，讓它在背景執行，避免在 WebSocket 事件處理器內造成死鎖
+
+            this.throttledOutboundCall(broadcastWs, eventEntity, false, false, participantSnapshot0)!.catch(error => {
+              errorWithTimestamp('case 0 觸發外撥邏輯時發生錯誤:', error);
+            });
           }
           break;
         case 1:
@@ -594,7 +598,10 @@ export default class Project {
           
           // 將捕獲的快照傳入 outboundCall
           logWithTimestamp(`調用 outboundCall 處理事件 entity: ${eventEntity}，狀態: ${this.state}`);
-          await this.outboundCall(broadcastWs, eventEntity, true, false, participantSnapshot1);
+          // 注意：不 await，讓它在背景執行，避免在 WebSocket 事件處理器內造成死鎖
+          this.outboundCall(broadcastWs, eventEntity, true, false, participantSnapshot1).catch(error => {
+            errorWithTimestamp('case 1 觸發外撥邏輯時發生錯誤:', error);
+          });
 
           break;
         default:
@@ -665,8 +672,15 @@ export default class Project {
         const currentToken = this.tokenManager.getAccessToken();
         if (currentToken && currentToken !== this.access_token) {
           this.access_token = currentToken;
-          // Token 已更新，需要重新建立 WebSocket 連接
-          await this.handleTokenUpdateWebSocketReconnect(broadcastWs);
+          // Token 已更新，但不要在 Mutex 內重新建立 WebSocket 連接，避免死鎖
+          // 改為異步處理，讓 WebSocket 重連接在 Mutex 釋放後進行
+          logWithTimestamp('⚠️ Token 已更新，將在 Mutex 釋放後重新建立 WebSocket 連接');
+          // 使用 setImmediate 或 setTimeout 延遲執行，確保 Mutex 先釋放
+          setImmediate(() => {
+            this.handleTokenUpdateWebSocketReconnect(broadcastWs).catch(error => {
+              errorWithTimestamp('Token 更新後非同步重連 WebSocket 失敗:', error);
+            });
+          });
           // 注意：分機狀態管理器現在使用管理員 token 自動管理，不需要同步更新
         }
         
@@ -1695,8 +1709,14 @@ export default class Project {
       // 執行外撥邏輯
       logWithTimestamp(`📞 執行外撥邏輯 - 專案: ${this.projectId}`);
       // 使用 throttle 版本
+      // 注意：由於 WebSocket onMessage 可能持有 Mutex，這裡不能 await throttledOutboundCall
+      // 以免造成死鎖。改為 fire-and-forget，讓它在背景執行
       if (this.throttledOutboundCall) {
-        await this.throttledOutboundCall(broadcastWs, null, true, true);
+        // 不 await，讓它異步執行，避免在 WebSocket 事件處理器內造成死鎖
+
+        this.throttledOutboundCall!(broadcastWs, null, true, true)!.catch(error => {
+          errorWithTimestamp('異步執行初始外撥邏輯時發生錯誤:', error);
+        });
       }
       
       // 啟動空閒檢查定時器
@@ -1894,11 +1914,15 @@ export default class Project {
       // 添加隨機延遲（4-6秒），避免多個定時器同時觸發造成的競態條件
       const randomDelay = Math.random() * 2000 + 4000; // 4000-6000ms 的隨機延遲
       
-      setTimeout(async () => {
+      setTimeout(() => {
         logWithTimestamp(`🔄 延遲後觸發外撥邏輯 - 專案: ${this.projectId}`);
         // 🆕 使用 debounced 版本
+        // 注意：不 await，讓它在背景執行，避免可能的死鎖
         if (this.throttledOutboundCall) {
-          await this.throttledOutboundCall(this.broadcastWsRef, null, true, true);
+
+          this.throttledOutboundCall!(this.broadcastWsRef, null, true, true)!.catch(error => {
+            errorWithTimestamp('延遲觸發外撥邏輯時發生錯誤:', error);
+          });
         }
       }, randomDelay);
       
