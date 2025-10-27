@@ -587,11 +587,15 @@ export default class Project {
 
           // 如果專案狀態是 stop，檢查是否還有活躍通話
           if (this.state === 'stop') {
+            logWithTimestamp(`專案狀態為 stop，執行停止狀態邏輯處理`);
             await this.handleStopStateLogic(broadcastWs);
-          } else {
-            // 將捕獲的快照傳入 outboundCall
-            await this.outboundCall(broadcastWs, eventEntity, true, false, participantSnapshot1);
-          }
+            return;
+          } 
+          
+          // 將捕獲的快照傳入 outboundCall
+          logWithTimestamp(`調用 outboundCall 處理事件 entity: ${eventEntity}，狀態: ${this.state}`);
+          await this.outboundCall(broadcastWs, eventEntity, true, false, participantSnapshot1);
+
           break;
         default:
           logWithTimestamp('未知事件類型:', eventType);
