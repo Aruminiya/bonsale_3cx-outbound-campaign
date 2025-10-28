@@ -82,6 +82,11 @@ type WsMessageObject = {
   }
 }
 
+// 紀錄分機最後執行時間的物件
+type CallerExtensionLastExecutionTime = {
+  [extension: string]: string;
+}
+
 export default class Project {
   grant_type: string;
   client_id: string;
@@ -96,13 +101,14 @@ export default class Project {
   caller: Array<Caller> | null;
   latestCallRecord: Array<CallRecord> = []; // 保存當前撥打記錄
   agentQuantity: number | 0;
-  recurrence: string | null = null; // 🆕 新增 recurrence 屬性
-  callRestriction: CallRestriction[] = []; // 🆕 新增 callRestriction 屬性
+  recurrence: string | null = null; // 新增 recurrence 屬性
+  callRestriction: CallRestriction[] = []; // 新增 callRestriction 屬性
+  callerExtensionLastExecutionTime: CallerExtensionLastExecutionTime = {}; // 分機最新執行時間記錄
   private previousCallRecord: Array<CallRecord> | null = null; // 保存前一筆撥打記錄
   private wsManager: WebSocketManager | null = null;
   private tokenManager: TokenManager;
   private throttledMessageHandler: DebouncedFunc<(broadcastWs: WebSocketServer, data: Buffer) => Promise<void>> | null = null;
-  // 🆕 為 outboundCall 方法添加 debounce
+  // 為 outboundCall 方法添加 throttled
   private throttledOutboundCall: DebouncedFunc<(broadcastWs: WebSocketServer | undefined, eventEntity: string | null, isExecuteOutboundCalls?: boolean, isInitCall?: boolean, participantSnapshot?: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null) => Promise<void>> | null = null;
   private idleCheckTimer: NodeJS.Timeout | null = null; // 空閒檢查定時器
   private idleCheckInterval: number = 30000; // 當前檢查間隔（毫秒）
@@ -111,7 +117,7 @@ export default class Project {
   private readonly idleCheckBackoffFactor: number = 1.5; // 指數退避倍數
   private broadcastWsRef: WebSocketServer | undefined = undefined; // 保存 WebSocket 引用
 
-  // 🆕 全域 Mutex - 保護 latestCallRecord 和 previousCallRecord 的原子性
+  // 全域 Mutex - 保護 latestCallRecord 和 previousCallRecord 的原子性
   private readonly processCallerMutex: Mutex = new Mutex(); // 全域互斥鎖，確保只有一個分機能同時執行 processCallerOutbound
 
   /**
@@ -140,7 +146,8 @@ export default class Project {
     latestCallRecord: Array<CallRecord> = [],
     agentQuantity: number | 0,
     recurrence: string | null = null,
-    callRestriction: CallRestriction[] = []
+    callRestriction: CallRestriction[] = [],
+    callerExtensionLastExecutionTime: CallerExtensionLastExecutionTime = {}
   ) {
     this.grant_type = 'client_credentials';
     this.client_id = client_id;
@@ -157,6 +164,7 @@ export default class Project {
     this.agentQuantity = agentQuantity;
     this.recurrence = recurrence;
     this.callRestriction = callRestriction;
+    this.callerExtensionLastExecutionTime = callerExtensionLastExecutionTime;
 
     // 初始化 TokenManager
     this.tokenManager = new TokenManager(client_id, client_secret, projectId, access_token);
@@ -167,9 +175,8 @@ export default class Project {
       trailing: true // 在等待期結束後執行
     });
 
-    // 初始化 throttle outboundCall 方法 (300ms 內最多執行一次)
-    // TODO 卡住的問題可能問題在這邊
-    this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 300, {
+    // 初始化 throttle outboundCall 方法 (500ms 內最多執行一次)
+    this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 500, {
       leading: false,   // 第一次不立即執行
       trailing: true  // 在等待期結束後執行
     });
@@ -535,6 +542,10 @@ export default class Project {
       // 根據不同的事件類型處理邏輯
       const eventType = messageObject.event.event_type;
       const eventEntity = messageObject.event.entity;
+
+      // 📝 統一在此處記錄分機執行時間（適用於所有事件類型）
+      this.recordCallerExtensionLastExecutionTime(eventEntity);
+
       switch (eventType) {
         case 0:
           logWithTimestamp(`狀態 ${eventType}:`, messageObject.event);
@@ -612,6 +623,14 @@ export default class Project {
       // 如果不是 JSON 格式，直接記錄原始數據
       logWithTimestamp('3CX WebSocket 收到非JSON訊息:', data.toString('utf8'));
       errorWithTimestamp('解析 WebSocket 訊息時發生錯誤:', error);
+    }
+  }
+
+  private recordCallerExtensionLastExecutionTime(eventEntity: string | null): void {
+    if (eventEntity) {
+      const eventEntity_dn = eventEntity.split('/')[2]; // 格式固定為 /callcontrol/{dnnumber}/participants/{id}
+      this.callerExtensionLastExecutionTime[eventEntity_dn] = new Date().toISOString();
+      logWithTimestamp(`📝 紀錄分機 ${eventEntity_dn} 最後執行時間: ${this.callerExtensionLastExecutionTime[eventEntity_dn]}`);
     }
   }
 
