@@ -68,6 +68,7 @@ export interface ProjectData {
   caller: unknown;
   access_token: string | null;
   recurrence: string | null;
+  callerExtensionLastExecutionTime?: Record<string, string>; // 🆕 分機最後執行時間記錄
   info: string | null;
   warning: string | null;
   error: string | null;

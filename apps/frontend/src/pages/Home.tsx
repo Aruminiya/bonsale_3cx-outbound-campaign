@@ -575,7 +575,7 @@ export default function Home() {
                     <TableCell align='left'>
                       {!projectWsData?.caller || projectWsData.caller.length === 0 ? (
                         <Chip label="無分機資料" variant="outlined" size="small" />
-                      ):                          <Stack spacing={2}>
+                      ): <Stack spacing={2}>
                         {projectWsData && projectWsData.caller.map((caller, callerIndex) => (
                           <Box 
                             key={`${caller.dn}-${callerIndex}`}
@@ -661,21 +661,35 @@ export default function Home() {
                                         sx={{ fontSize: '0.7rem' }}
                                       />
                                     </Stack>
+                                    {/* 🆕 顯示分機最後執行時間 */}
+                                    {projectWsData.callerExtensionLastExecutionTime && projectWsData.callerExtensionLastExecutionTime[caller.dn] && (
+                                      <Box sx={{ fontSize: '0.75rem', color: '#666' }}>
+                                        最後執行: {new Date(projectWsData.callerExtensionLastExecutionTime[caller.dn]).toLocaleTimeString('zh-TW')}
+                                      </Box>
+                                    )}
                                   </Box>
                                 ))}
                               </Stack>
                             ) : (
-                              <Box sx={{ textAlign: 'center', padding: '8px' }}>
-                                <Chip
-                                  label="分機空閒"
-                                  size="small"
-                                  sx={{ 
-                                    bgcolor: (theme) => theme.palette.success.color300,
-                                    color: 'white',
-                                    fontWeight: 'bold'
-                                  }}
-                                />
-                              </Box>
+                              <>
+                                <Stack spacing={1} sx={{ alignItems: 'center' }}>
+                                  <Chip
+                                    label="分機空閒"
+                                    size="small"
+                                    sx={{
+                                      bgcolor: (theme) => theme.palette.success.color300,
+                                      color: 'white',
+                                      fontWeight: 'bold'
+                                    }}
+                                  />
+                                </Stack>
+                                {/* 🆕 顯示分機最後執行時間 */}
+                                {projectWsData.callerExtensionLastExecutionTime && projectWsData.callerExtensionLastExecutionTime[caller.dn] && (
+                                  <Box sx={{ fontSize: '0.75rem', color: '#666' }}>
+                                    最後執行: {new Date(projectWsData.callerExtensionLastExecutionTime[caller.dn]).toLocaleTimeString('zh-TW')}
+                                  </Box>
+                                )}
+                              </>
                             )}
                           </Box>
                         ))}

@@ -82,6 +82,11 @@ type WsMessageObject = {
   }
 }
 
+// 紀錄分機最後執行時間的物件
+type CallerExtensionLastExecutionTime = {
+  [extension: string]: string;
+}
+
 export default class Project {
   grant_type: string;
   client_id: string;
@@ -96,13 +101,14 @@ export default class Project {
   caller: Array<Caller> | null;
   latestCallRecord: Array<CallRecord> = []; // 保存當前撥打記錄
   agentQuantity: number | 0;
-  recurrence: string | null = null; // 🆕 新增 recurrence 屬性
-  callRestriction: CallRestriction[] = []; // 🆕 新增 callRestriction 屬性
+  recurrence: string | null = null; // 新增 recurrence 屬性
+  callRestriction: CallRestriction[] = []; // 新增 callRestriction 屬性
+  callerExtensionLastExecutionTime: CallerExtensionLastExecutionTime = {}; // 分機最新執行時間記錄
   private previousCallRecord: Array<CallRecord> | null = null; // 保存前一筆撥打記錄
   private wsManager: WebSocketManager | null = null;
   private tokenManager: TokenManager;
   private throttledMessageHandler: DebouncedFunc<(broadcastWs: WebSocketServer, data: Buffer) => Promise<void>> | null = null;
-  // 🆕 為 outboundCall 方法添加 debounce
+  // 為 outboundCall 方法添加 throttled
   private throttledOutboundCall: DebouncedFunc<(broadcastWs: WebSocketServer | undefined, eventEntity: string | null, isExecuteOutboundCalls?: boolean, isInitCall?: boolean, participantSnapshot?: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null) => Promise<void>> | null = null;
   private idleCheckTimer: NodeJS.Timeout | null = null; // 空閒檢查定時器
   private idleCheckInterval: number = 30000; // 當前檢查間隔（毫秒）
@@ -111,7 +117,7 @@ export default class Project {
   private readonly idleCheckBackoffFactor: number = 1.5; // 指數退避倍數
   private broadcastWsRef: WebSocketServer | undefined = undefined; // 保存 WebSocket 引用
 
-  // 🆕 全域 Mutex - 保護 latestCallRecord 和 previousCallRecord 的原子性
+  // 全域 Mutex - 保護 latestCallRecord 和 previousCallRecord 的原子性
   private readonly processCallerMutex: Mutex = new Mutex(); // 全域互斥鎖，確保只有一個分機能同時執行 processCallerOutbound
 
   // 🆕 Token 刷新 Flag - 防止重複刷新 WebSocket 連接
@@ -143,7 +149,8 @@ export default class Project {
     latestCallRecord: Array<CallRecord> = [],
     agentQuantity: number | 0,
     recurrence: string | null = null,
-    callRestriction: CallRestriction[] = []
+    callRestriction: CallRestriction[] = [],
+    callerExtensionLastExecutionTime: CallerExtensionLastExecutionTime = {}
   ) {
     this.grant_type = 'client_credentials';
     this.client_id = client_id;
@@ -160,6 +167,7 @@ export default class Project {
     this.agentQuantity = agentQuantity;
     this.recurrence = recurrence;
     this.callRestriction = callRestriction;
+    this.callerExtensionLastExecutionTime = callerExtensionLastExecutionTime;
 
     // 初始化 TokenManager
     this.tokenManager = new TokenManager(client_id, client_secret, projectId, access_token);
@@ -170,12 +178,12 @@ export default class Project {
       trailing: true // 在等待期結束後執行
     });
 
-    // 初始化 throttle outboundCall 方法 (300ms 內最多執行一次)
-    // TODO 卡住的問題可能問題在這邊
-    this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 300, {
+    // 初始化 throttle outboundCall 方法 (500ms 內最多執行一次)
+    this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 500, {
       leading: false,   // 第一次不立即執行
       trailing: true  // 在等待期結束後執行
     });
+
   }
 
   /**
@@ -538,6 +546,7 @@ export default class Project {
       // 根據不同的事件類型處理邏輯
       const eventType = messageObject.event.event_type;
       const eventEntity = messageObject.event.entity;
+
       switch (eventType) {
         case 0:
           logWithTimestamp(`狀態 ${eventType}:`, messageObject.event);
@@ -615,6 +624,26 @@ export default class Project {
       // 如果不是 JSON 格式，直接記錄原始數據
       logWithTimestamp('3CX WebSocket 收到非JSON訊息:', data.toString('utf8'));
       errorWithTimestamp('解析 WebSocket 訊息時發生錯誤:', error);
+    }
+  }
+
+  /**
+   * 紀錄分機執行時間
+   * @param eventEntity 事件實體字串
+   * @private
+   */
+  private async recordCallerExtensionLastExecutionTime(dn: string): Promise<void> {
+    if (dn) {
+      this.callerExtensionLastExecutionTime[dn] = new Date().toISOString();
+      logWithTimestamp(`📝 紀錄分機 ${dn} 最後執行時間: ${this.callerExtensionLastExecutionTime[dn]}`);
+
+      // 同時保存到 Redis
+      try {
+        await ProjectManager.saveProject(this);
+        logWithTimestamp(`✅ 分機 ${dn} 執行時間已保存到 Redis`);
+      } catch (error) {
+        errorWithTimestamp(`❌ 保存分機 ${dn} 執行時間到 Redis 失敗:`, error);
+      }
     }
   }
 
@@ -938,7 +967,7 @@ export default class Project {
           // 代理人可用，執行外撥邏輯
           await this.processCallerOutbound(caller.dn, caller.devices[0].device_id);
           
-          // 🆕 在處理下一個分機前添加延遲，給 API 和 WebSocket 一些反應時間
+          // 在處理下一個分機前添加延遲，給 API 和 WebSocket 一些反應時間
           // 使用快照長度而非 this.caller.length，避免 this.caller 被修改時的不一致
           const currentIndex = callerSnapshot.indexOf(caller);
           if (currentIndex < callerSnapshot.length - 1) {
@@ -1325,6 +1354,9 @@ export default class Project {
         case "Dialing":
           logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為撥號中，前一通電話記錄為未接通`);
           try {
+            // 紀錄分機最後執行時間
+            await this.recordCallerExtensionLastExecutionTime(previousCallRecord.dn);
+
             const callStatusResult = await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 2); // 2 表示未接通 更新 Bonsale 撥號狀態 失敗
             await this.handleApiError('updateCallStatus', callStatusResult);
             
@@ -1427,6 +1459,9 @@ export default class Project {
           logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為已接通，前一通電話記錄為已接通`);
           const visitedAt = previousCallRecord.dialTime || new Date().toISOString(); // 使用撥打時間或當前時間
           try {
+            // 紀錄分機最後執行時間
+            await this.recordCallerExtensionLastExecutionTime(previousCallRecord.dn);
+
             const callStatusResult2 = await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 1); // 1 表示已接通 更新 Bonsale 撥號狀態 成功
             await this.handleApiError('updateCallStatus (Connected)', callStatusResult2);
 
@@ -1728,13 +1763,9 @@ export default class Project {
       // 使用 throttle 版本
       // 注意：由於 WebSocket onMessage 可能持有 Mutex，這裡不能 await throttledOutboundCall
       // 以免造成死鎖。改為 fire-and-forget，讓它在背景執行
-      if (this.throttledOutboundCall) {
-        // 不 await，讓它異步執行，避免在 WebSocket 事件處理器內造成死鎖
-
-        this.throttledOutboundCall!(broadcastWs, null, true, true)!.catch(error => {
-          errorWithTimestamp('異步執行初始外撥邏輯時發生錯誤:', error);
-        });
-      }
+      this.outboundCall(broadcastWs, null, true, true).catch(error => {
+        errorWithTimestamp('異步執行初始外撥邏輯時發生錯誤:', error);
+      });
       
       // 啟動空閒檢查定時器
       const IS_STARTIDLECHECK = process.env.IS_STARTIDLECHECK;
@@ -1917,35 +1948,57 @@ export default class Project {
       return false;
     }
 
-    // 檢查是否有空閒且非忙碌的分機
+    // 🆕 冷卻時間常數 (6分鐘)
+    const EXTENSION_COOLDOWN_TIME_MS = 60000;
+
+    // 檢查是否有空閒且非忙碌的分機，並且不在冷卻期內
     const hasIdleExtension = this.caller.some(caller => {
       // 檢查分機是否空閒（沒有通話中）
       const isIdle = !caller.participants || caller.participants.length === 0;
-      
-      return isIdle;
+
+      if (!isIdle) {
+        return false;
+      }
+
+      // 🆕 檢查分機是否在冷卻期內（防止重複撥號）
+      const dn = caller.dn;
+      const lastExecutionTime = this.callerExtensionLastExecutionTime[dn];
+
+      if (lastExecutionTime) {
+        const now = new Date();
+        const lastTime = new Date(lastExecutionTime);
+        const timeDiffMs = now.getTime() - lastTime.getTime();
+        const timeDiffSeconds = timeDiffMs / 1000;
+
+        // 如果距離上次執行少於 1 分鐘，則跳過此分機
+        if (timeDiffMs < EXTENSION_COOLDOWN_TIME_MS) {
+          logWithTimestamp(
+            `⏱️ 分機 ${dn} 在冷卻期內 (${timeDiffSeconds.toFixed(1)}s)，跳過此次撥號`
+          );
+          return false;
+        }
+      }
+
+      return true;
     });
 
     if (hasIdleExtension) {
       logWithTimestamp(`🔄 檢測到空閒分機，準備延遲觸發外撥邏輯 - 專案: ${this.projectId}`);
-      
+
       // 添加隨機延遲（4-6秒），避免多個定時器同時觸發造成的競態條件
       const randomDelay = Math.random() * 2000 + 4000; // 4000-6000ms 的隨機延遲
-      
+
       setTimeout(() => {
         logWithTimestamp(`🔄 延遲後觸發外撥邏輯 - 專案: ${this.projectId}`);
-        // 🆕 使用 debounced 版本
         // 注意：不 await，讓它在背景執行，避免可能的死鎖
-        if (this.throttledOutboundCall) {
-
-          this.throttledOutboundCall!(this.broadcastWsRef, null, true, true)!.catch(error => {
-            errorWithTimestamp('延遲觸發外撥邏輯時發生錯誤:', error);
-          });
-        }
+        this.outboundCall(this.broadcastWsRef, null, true, true)!.catch(error => {
+          errorWithTimestamp('延遲觸發外撥邏輯時發生錯誤:', error);
+        });
       }, randomDelay);
-      
+
       return true;
     }
-    
+
     return false;
   }
 
