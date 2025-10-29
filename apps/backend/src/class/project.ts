@@ -114,6 +114,9 @@ export default class Project {
   // 🆕 全域 Mutex - 保護 latestCallRecord 和 previousCallRecord 的原子性
   private readonly processCallerMutex: Mutex = new Mutex(); // 全域互斥鎖，確保只有一個分機能同時執行 processCallerOutbound
 
+  // 🆕 Token 刷新 Flag - 防止重複刷新 WebSocket 連接
+  private isRefreshingToken: boolean = false;
+
   /**
    * Project 類別構造函數
    * @param client_id 3CX 客戶端 ID
@@ -675,12 +678,26 @@ export default class Project {
           // Token 已更新，但不要在 Mutex 內重新建立 WebSocket 連接，避免死鎖
           // 改為異步處理，讓 WebSocket 重連接在 Mutex 釋放後進行
           logWithTimestamp('⚠️ Token 已更新，將在 Mutex 釋放後重新建立 WebSocket 連接');
-          // 使用 setImmediate 或 setTimeout 延遲執行，確保 Mutex 先釋放
-          setImmediate(() => {
-            this.handleTokenUpdateWebSocketReconnect(broadcastWs).catch(error => {
-              errorWithTimestamp('Token 更新後非同步重連 WebSocket 失敗:', error);
+
+          // 🆕 使用 Flag 防止重複刷新 WebSocket 連接
+          if (!this.isRefreshingToken) {
+            this.isRefreshingToken = true;  // 🔒 立即鎖定
+            logWithTimestamp('🔒 設置 isRefreshingToken = true，防止重複刷新');
+
+            // 使用 setImmediate 延遲執行，確保 Mutex 先釋放
+            setImmediate(() => {
+              this.handleTokenUpdateWebSocketReconnect(broadcastWs)
+                .catch(error => {
+                  errorWithTimestamp('Token 更新後非同步重連 WebSocket 失敗:', error);
+                })
+                .finally(() => {
+                  this.isRefreshingToken = false;  // 🔓 解鎖
+                  logWithTimestamp('🔓 設置 isRefreshingToken = false，允許下次刷新');
+                });
             });
-          });
+          } else {
+            logWithTimestamp('⏭️ 已有 WebSocket 重連接在進行中，跳過此次刷新');
+          }
           // 注意：分機狀態管理器現在使用管理員 token 自動管理，不需要同步更新
         }
         
