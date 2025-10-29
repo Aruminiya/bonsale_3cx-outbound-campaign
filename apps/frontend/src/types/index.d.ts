@@ -19,6 +19,7 @@ declare global {
     extension: string
     recurrence: string | null
     callRestriction: CallRestriction[]
+    callerExtensionLastExecutionTime?: Record<string, string>; // 🆕 分機最後執行時間記錄
     isEnable: boolean
   }
   interface ProjectCustomersDesc {
@@ -394,6 +395,7 @@ declare global {
       }>;
     }>;
     latestCallRecord: CallRecord[] | null;
+    callerExtensionLastExecutionTime: Record<string, string>; // 分機最後執行時間記錄
     info: string | null;
     warning: string | null;
     error: string | null;
