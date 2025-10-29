@@ -1919,35 +1919,57 @@ export default class Project {
       return false;
     }
 
-    // 檢查是否有空閒且非忙碌的分機
+    // 🆕 冷卻時間常數 (1分鐘)
+    const EXTENSION_COOLDOWN_TIME_MS = 60000;
+
+    // 檢查是否有空閒且非忙碌的分機，並且不在冷卻期內
     const hasIdleExtension = this.caller.some(caller => {
       // 檢查分機是否空閒（沒有通話中）
       const isIdle = !caller.participants || caller.participants.length === 0;
-      
-      return isIdle;
+
+      if (!isIdle) {
+        return false;
+      }
+
+      // 🆕 檢查分機是否在冷卻期內（防止重複撥號）
+      const dn = caller.dn;
+      const lastExecutionTime = this.callerExtensionLastExecutionTime[dn];
+
+      if (lastExecutionTime) {
+        const now = new Date();
+        const lastTime = new Date(lastExecutionTime);
+        const timeDiffMs = now.getTime() - lastTime.getTime();
+        const timeDiffSeconds = timeDiffMs / 1000;
+
+        // 如果距離上次執行少於 1 分鐘，則跳過此分機
+        if (timeDiffMs < EXTENSION_COOLDOWN_TIME_MS) {
+          logWithTimestamp(
+            `⏱️ 分機 ${dn} 在冷卻期內 (${timeDiffSeconds.toFixed(1)}s)，跳過此次撥號`
+          );
+          return false;
+        }
+      }
+
+      return true;
     });
 
     if (hasIdleExtension) {
       logWithTimestamp(`🔄 檢測到空閒分機，準備延遲觸發外撥邏輯 - 專案: ${this.projectId}`);
-      
+
       // 添加隨機延遲（4-6秒），避免多個定時器同時觸發造成的競態條件
       const randomDelay = Math.random() * 2000 + 4000; // 4000-6000ms 的隨機延遲
-      
+
       setTimeout(() => {
         logWithTimestamp(`🔄 延遲後觸發外撥邏輯 - 專案: ${this.projectId}`);
-        // 🆕 使用 debounced 版本
         // 注意：不 await，讓它在背景執行，避免可能的死鎖
-        if (this.throttledOutboundCall) {
-
-          this.throttledOutboundCall!(this.broadcastWsRef, null, true, true)!.catch(error => {
-            errorWithTimestamp('延遲觸發外撥邏輯時發生錯誤:', error);
-          });
-        }
+        this.outboundCall(this.broadcastWsRef, null, true, true)!.catch(error => {
+          errorWithTimestamp('延遲觸發外撥邏輯時發生錯誤:', error);
+        });
       }, randomDelay);
-      
+
       return true;
     }
-    
+
     return false;
   }
 
