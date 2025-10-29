@@ -180,6 +180,7 @@ export default class Project {
       leading: false,   // 第一次不立即執行
       trailing: true  // 在等待期結束後執行
     });
+
   }
 
   /**
@@ -543,9 +544,6 @@ export default class Project {
       const eventType = messageObject.event.event_type;
       const eventEntity = messageObject.event.entity;
 
-      // 📝 統一在此處記錄分機執行時間（適用於所有事件類型）
-      this.recordCallerExtensionLastExecutionTime(eventEntity);
-
       switch (eventType) {
         case 0:
           logWithTimestamp(`狀態 ${eventType}:`, messageObject.event);
@@ -626,11 +624,23 @@ export default class Project {
     }
   }
 
-  private recordCallerExtensionLastExecutionTime(eventEntity: string | null): void {
-    if (eventEntity) {
-      const eventEntity_dn = eventEntity.split('/')[2]; // 格式固定為 /callcontrol/{dnnumber}/participants/{id}
-      this.callerExtensionLastExecutionTime[eventEntity_dn] = new Date().toISOString();
-      logWithTimestamp(`📝 紀錄分機 ${eventEntity_dn} 最後執行時間: ${this.callerExtensionLastExecutionTime[eventEntity_dn]}`);
+  /**
+   * 紀錄分機執行時間
+   * @param eventEntity 事件實體字串
+   * @private
+   */
+  private async recordCallerExtensionLastExecutionTime(dn: string): Promise<void> {
+    if (dn) {
+      this.callerExtensionLastExecutionTime[dn] = new Date().toISOString();
+      logWithTimestamp(`📝 紀錄分機 ${dn} 最後執行時間: ${this.callerExtensionLastExecutionTime[dn]}`);
+
+      // 同時保存到 Redis
+      try {
+        await ProjectManager.saveProject(this);
+        logWithTimestamp(`✅ 分機 ${dn} 執行時間已保存到 Redis`);
+      } catch (error) {
+        errorWithTimestamp(`❌ 保存分機 ${dn} 執行時間到 Redis 失敗:`, error);
+      }
     }
   }
 
@@ -940,7 +950,7 @@ export default class Project {
           // 代理人可用，執行外撥邏輯
           await this.processCallerOutbound(caller.dn, caller.devices[0].device_id);
           
-          // 🆕 在處理下一個分機前添加延遲，給 API 和 WebSocket 一些反應時間
+          // 在處理下一個分機前添加延遲，給 API 和 WebSocket 一些反應時間
           // 使用快照長度而非 this.caller.length，避免 this.caller 被修改時的不一致
           const currentIndex = callerSnapshot.indexOf(caller);
           if (currentIndex < callerSnapshot.length - 1) {
@@ -1327,6 +1337,9 @@ export default class Project {
         case "Dialing":
           logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為撥號中，前一通電話記錄為未接通`);
           try {
+            // 紀錄分機最後執行時間
+            await this.recordCallerExtensionLastExecutionTime(previousCallRecord.dn);
+
             const callStatusResult = await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 2); // 2 表示未接通 更新 Bonsale 撥號狀態 失敗
             await this.handleApiError('updateCallStatus', callStatusResult);
             
@@ -1429,6 +1442,9 @@ export default class Project {
           logWithTimestamp(`分機 ${previousCallRecord.dn} 狀態為已接通，前一通電話記錄為已接通`);
           const visitedAt = previousCallRecord.dialTime || new Date().toISOString(); // 使用撥打時間或當前時間
           try {
+            // 紀錄分機最後執行時間
+            await this.recordCallerExtensionLastExecutionTime(previousCallRecord.dn);
+
             const callStatusResult2 = await updateCallStatus(previousCallRecord.projectId, previousCallRecord.customerId, 1); // 1 表示已接通 更新 Bonsale 撥號狀態 成功
             await this.handleApiError('updateCallStatus (Connected)', callStatusResult2);
 
@@ -1730,13 +1746,9 @@ export default class Project {
       // 使用 throttle 版本
       // 注意：由於 WebSocket onMessage 可能持有 Mutex，這裡不能 await throttledOutboundCall
       // 以免造成死鎖。改為 fire-and-forget，讓它在背景執行
-      if (this.throttledOutboundCall) {
-        // 不 await，讓它異步執行，避免在 WebSocket 事件處理器內造成死鎖
-
-        this.throttledOutboundCall!(broadcastWs, null, true, true)!.catch(error => {
-          errorWithTimestamp('異步執行初始外撥邏輯時發生錯誤:', error);
-        });
-      }
+      this.outboundCall(broadcastWs, null, true, true).catch(error => {
+        errorWithTimestamp('異步執行初始外撥邏輯時發生錯誤:', error);
+      });
       
       // 啟動空閒檢查定時器
       const IS_STARTIDLECHECK = process.env.IS_STARTIDLECHECK;
@@ -1919,7 +1931,7 @@ export default class Project {
       return false;
     }
 
-    // 🆕 冷卻時間常數 (1分鐘)
+    // 🆕 冷卻時間常數 (6分鐘)
     const EXTENSION_COOLDOWN_TIME_MS = 60000;
 
     // 檢查是否有空閒且非忙碌的分機，並且不在冷卻期內
