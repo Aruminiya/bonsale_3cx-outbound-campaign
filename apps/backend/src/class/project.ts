@@ -919,17 +919,19 @@ export default class Project {
 
     // 檢查是否有 callRestriction 限制撥打時間
     if (this.callRestriction && this.callRestriction.length > 0) {
-      // TODO 跟 Victor 確認時區問題 決定前端要 UTC - 8
-      // 所以我這邊就不用轉換 
+      // callRestriction 的時間格式是 UTC+0，直接使用 UTC 時間比較
       const now = new Date();
-      // // 將時間轉換為 UTC+8 (台北時間)
-      now.setHours(now.getUTCHours() + 8);
+      const currentTimeInMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
 
       // 檢查當前時間是否在任何一個限制時間範圍內
       const isInRestrictedTime = this.callRestriction.some(restriction => {
-        const startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(restriction.startTime.split(':')[0]), Number(restriction.startTime.split(':')[1]));
-        const stopTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(restriction.stopTime.split(':')[0]), Number(restriction.stopTime.split(':')[1]));
-        return now >= startTime && now <= stopTime;
+        const [startHour, startMinute] = restriction.startTime.split(':').map(Number);
+        const [stopHour, stopMinute] = restriction.stopTime.split(':').map(Number);
+        
+        const startTimeInMinutes = startHour * 60 + startMinute;
+        const stopTimeInMinutes = stopHour * 60 + stopMinute;
+        
+        return currentTimeInMinutes >= startTimeInMinutes && currentTimeInMinutes <= stopTimeInMinutes;
       })
 
       if (isInRestrictedTime) {
