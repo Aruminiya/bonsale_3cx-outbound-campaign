@@ -1790,6 +1790,8 @@ export default class Project {
       // 啟動空閒檢查定時器
       if (IS_STARTIDLECHECK) {
         logWithTimestamp(`🕰️ 啟動空閒檢查定時器 - 專案: ${this.projectId}`);
+        logWithTimestamp(`🕰️ 空閒檢查參數 - 初始間隔: ${this.minIdleCheckInterval / 1000}秒, 最大間隔: ${this.maxIdleCheckInterval / 1000}秒`);
+        logWithTimestamp(`🕰️ 空閒檢查指數退避參數 - 乘數: ${this.idleCheckBackoffFactor}`);
         this.startIdleCheck(broadcastWs);
       } else {
         logWithTimestamp(`⏸️ 未啟動空閒檢查定時器（IS_STARTIDLECHECK=${IS_STARTIDLECHECK}） - 專案: ${this.projectId}`);
