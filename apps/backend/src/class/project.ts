@@ -1135,14 +1135,14 @@ export default class Project {
                 if (oldRecord) {
                   logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
 
-                  // try {
-                  //   // 立即處理舊記錄
-                  //   await this.recordBonsaleCallResult(oldRecord);
-                  //   logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
-                  // } catch (error) {
-                  //   errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
-                  //   // 即使處理失敗，也繼續執行，避免阻塞流程
-                  // }
+                  try {
+                    // 立即處理舊記錄
+                    await this.recordBonsaleCallResult(oldRecord);
+                    logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
+                  } catch (error) {
+                    errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
+                    // 即使處理失敗，也繼續執行，避免阻塞流程
+                  }
                 }
 
                 // 然後用新記錄覆蓋
@@ -1208,14 +1208,14 @@ export default class Project {
                 if (oldRecord) {
                   logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
 
-                  // try {
-                  //   // 立即處理舊記錄
-                  //   await this.recordBonsaleCallResult(oldRecord);
-                  //   logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
-                  // } catch (error) {
-                  //   errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
-                  //   // 即使處理失敗，也繼續執行，避免阻塞流程
-                  // }
+                  try {
+                    // 立即處理舊記錄
+                    await this.recordBonsaleCallResult(oldRecord);
+                    logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
+                  } catch (error) {
+                    errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
+                    // 即使處理失敗，也繼續執行，避免阻塞流程
+                  }
                 }
 
                 // 然後用新記錄覆蓋
