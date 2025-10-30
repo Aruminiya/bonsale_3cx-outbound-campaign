@@ -18,8 +18,28 @@ import { isTodayInSchedule } from '../util/iCalendar';
 
 dotenv.config();
 
-// Define the WebSocket host for 3CX
+/**
+ * 定義常數
+ * @param WS_HOST_3CX 定義 3CX WebSocket 伺服器地址
+ * @param IS_STARTIDLECHECK 是否啟動空閒檢查定時器
+ * @param IDLE_CHECK_INTERVAL 當前檢查間隔（毫秒）
+ * @param MIN_IDLE_CHECK_INTERVAL 最小檢查間隔（毫秒）
+ * @param MAX_IDLE_CHECK_INTERVAL 最大檢查間隔（毫秒）
+ * @param IDLE_CHECK_BACKOFF_FACTOR 指數退避倍數
+ */
+
+// 定義 3CX WebSocket 伺服器地址
 const WS_HOST_3CX = process.env.WS_HOST_3CX;
+// 空間檢查定時器 冷卻時間
+const IS_STARTIDLECHECK = process.env.IS_STARTIDLECHECK === 'true' ? true : false;
+// 當前檢查間隔（毫秒）
+const IDLE_CHECK_INTERVAL = process.env.IDLE_CHECK_INTERVAL ? parseInt(process.env.IDLE_CHECK_INTERVAL) : 30000;
+// 最小檢查間隔（毫秒）
+const MIN_IDLE_CHECK_INTERVAL = process.env.MIN_IDLE_CHECK_INTERVAL ? parseInt(process.env.MIN_IDLE_CHECK_INTERVAL) : 30000;
+// 最大檢查間隔（毫秒）
+const MAX_IDLE_CHECK_INTERVAL = process.env.MAX_IDLE_CHECK_INTERVAL ? parseInt(process.env.MAX_IDLE_CHECK_INTERVAL) : 300000;
+// 指數退避倍數
+const IDLE_CHECK_BACKOFF_FACTOR = process.env.IDLE_CHECK_BACKOFF_FACTOR ? parseFloat(process.env.IDLE_CHECK_BACKOFF_FACTOR) : 1.5;
 
 // 檢查必要的環境變數
 if (!WS_HOST_3CX) {
@@ -111,10 +131,10 @@ export default class Project {
   // 為 outboundCall 方法添加 throttled
   private throttledOutboundCall: DebouncedFunc<(broadcastWs: WebSocketServer | undefined, eventEntity: string | null, isExecuteOutboundCalls?: boolean, isInitCall?: boolean, participantSnapshot?: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null) => Promise<void>> | null = null;
   private idleCheckTimer: NodeJS.Timeout | null = null; // 空閒檢查定時器
-  private idleCheckInterval: number = 30000; // 當前檢查間隔（毫秒）
-  private readonly minIdleCheckInterval: number = 30000; // 最小檢查間隔 30 秒
-  private readonly maxIdleCheckInterval: number = 300000; // 最大檢查間隔 5 分鐘
-  private readonly idleCheckBackoffFactor: number = 1.5; // 指數退避倍數
+  private idleCheckInterval: number = IDLE_CHECK_INTERVAL || 30000; // 當前檢查間隔 預設 30000 毫秒 (30 秒)
+  private readonly minIdleCheckInterval: number = MIN_IDLE_CHECK_INTERVAL || 30000; // 最小檢查間隔 預設 30000 毫秒 (30 秒)
+  private readonly maxIdleCheckInterval: number = MAX_IDLE_CHECK_INTERVAL || 300000; // 最大檢查間隔 預設 300000 毫秒 (5 分鐘)
+  private readonly idleCheckBackoffFactor: number = IDLE_CHECK_BACKOFF_FACTOR || 1.5; // 指數退避倍數 預設 1.5 倍
   private broadcastWsRef: WebSocketServer | undefined = undefined; // 保存 WebSocket 引用
 
   // 全域 Mutex - 保護 latestCallRecord 和 previousCallRecord 的原子性
@@ -1768,8 +1788,7 @@ export default class Project {
       });
       
       // 啟動空閒檢查定時器
-      const IS_STARTIDLECHECK = process.env.IS_STARTIDLECHECK;
-      if (IS_STARTIDLECHECK === 'true') {
+      if (IS_STARTIDLECHECK) {
         logWithTimestamp(`🕰️ 啟動空閒檢查定時器 - 專案: ${this.projectId}`);
         this.startIdleCheck(broadcastWs);
       } else {
