@@ -927,11 +927,23 @@ export default class Project {
       const isInRestrictedTime = this.callRestriction.some(restriction => {
         const [startHour, startMinute] = restriction.startTime.split(':').map(Number);
         const [stopHour, stopMinute] = restriction.stopTime.split(':').map(Number);
-        
+
         const startTimeInMinutes = startHour * 60 + startMinute;
         const stopTimeInMinutes = stopHour * 60 + stopMinute;
-        
-        return currentTimeInMinutes >= startTimeInMinutes && currentTimeInMinutes <= stopTimeInMinutes;
+
+        // 處理兩種情況：
+        // 1. 同一天內的時間範圍（例如 14:00 - 18:00）：startTime < stopTime
+        //    此時檢查：currentTime >= startTime && currentTime <= stopTime
+        // 2. 跨日期的時間範圍（例如 14:00 - 01:30）：startTime > stopTime
+        //    此時檢查：currentTime >= startTime || currentTime <= stopTime
+        //    （即從14:00到23:59，以及從00:00到01:30）
+        if (startTimeInMinutes < stopTimeInMinutes) {
+          // 同一天內：直接比較
+          return currentTimeInMinutes >= startTimeInMinutes && currentTimeInMinutes <= stopTimeInMinutes;
+        } else {
+          // 跨日期：當前時間在開始時間之後 OR 在結束時間之前
+          return currentTimeInMinutes >= startTimeInMinutes || currentTimeInMinutes <= stopTimeInMinutes;
+        }
       })
 
       if (isInRestrictedTime) {
