@@ -140,6 +140,11 @@ export default class Project {
   // 分機級別 Mutex Map - 確保每個分機獨立上鎖，提高並發性能
   private readonly extensionMutexMap: Map<string, Mutex> = new Map(); // Key: 分機號碼(dn), Value: 該分機的互斥鎖
 
+  // Token 刷新狀態機制 - 防止高併發下重複刷新
+  // 0: idle (未刷新中) | 1: checking (檢查中) | 2: refreshing (刷新中)
+  private tokenRefreshState: 0 | 1 | 2 = 0;
+  private lastTokenRefreshTime: number = 0; // 最後一次刷新時間戳
+
   // 🆕 Token 刷新 Flag - 防止重複刷新 WebSocket 連接
   private isRefreshingToken: boolean = false;
 
@@ -747,7 +752,7 @@ export default class Project {
         return;
       }
 
-      // 步驟二: 檢查並刷新 access_token
+      // 步驟二: 檢查並刷新 access_token（狀態機制防止高併發重複刷新）
       if (!this.access_token) {
         const errorMsg = '當前專案缺少 access_token';
         await this.setError(errorMsg);
@@ -755,42 +760,76 @@ export default class Project {
         return;
       }
 
-      // 檢測 token 是否到期並自動刷新
-      const tokenValid = await this.tokenManager.checkAndRefreshToken();
-      if (!tokenValid) {
-        const errorMsg = '無法獲得有效的 access_token，停止外撥流程';
-        await this.setError(errorMsg);
-        errorWithTimestamp(errorMsg);
-        return;
+      // 🔄 狀態機制：防止高併發下多個 WS 事件重複調用 checkAndRefreshToken()
+      // 只有第一個事件會執行刷新，其他事件會等待或略過
+      const MIN_REFRESH_INTERVAL = 5000; // 最小刷新間隔 5秒
+      const now = Date.now();
+      const timeSinceLastRefresh = now - this.lastTokenRefreshTime;
+
+      // 決定是否需要檢查 token
+      let shouldCheckToken = false;
+      if (this.tokenRefreshState === 0) {
+        // 狀態: idle - 可以檢查
+        if (timeSinceLastRefresh > MIN_REFRESH_INTERVAL) {
+          shouldCheckToken = true;
+          this.tokenRefreshState = 1; // 轉為 checking
+          logWithTimestamp(`[🔵 Token 檢查] 進入檢查狀態，距上次刷新: ${timeSinceLastRefresh}ms`);
+        }
+      } else if (this.tokenRefreshState === 1 || this.tokenRefreshState === 2) {
+        // 狀態: checking 或 refreshing - 其他事件等待或使用快取
+        logWithTimestamp(`[⏳ Token 狀態] 當前狀態: ${this.tokenRefreshState === 1 ? 'checking' : 'refreshing'}，跳過此次檢查`);
+        shouldCheckToken = false;
       }
 
-      // 同步更新當前實例的 token（如果 TokenManager 中的 token 被更新了）
-      const currentToken = this.tokenManager.getAccessToken();
-      if (currentToken && currentToken !== this.access_token) {
-        this.access_token = currentToken;
-        // Token 已更新，讓 WebSocket 重連接非同步進行
-        logWithTimestamp('⚠️ Token 已更新，將非同步重新建立 WebSocket 連接');
+      if (shouldCheckToken) {
+        try {
+          this.tokenRefreshState = 2; // 轉為 refreshing
+          logWithTimestamp(`[🔄 Token 刷新開始]`);
 
-        // 🆕 使用 Flag 防止重複刷新 WebSocket 連接
-        if (!this.isRefreshingToken) {
-          this.isRefreshingToken = true;  // 🔒 立即鎖定
-          logWithTimestamp('🔒 設置 isRefreshingToken = true，防止重複刷新');
+          // 檢測 token 是否到期並自動刷新
+          const tokenValid = await this.tokenManager.checkAndRefreshToken();
 
-          // 使用 setImmediate 延遲執行
-          setImmediate(() => {
-            this.handleTokenUpdateWebSocketReconnect(broadcastWs)
-              .catch(error => {
-                errorWithTimestamp('Token 更新後非同步重連 WebSocket 失敗:', error);
-              })
-              .finally(() => {
-                this.isRefreshingToken = false;  // 🔓 解鎖
-                logWithTimestamp('🔓 設置 isRefreshingToken = false，允許下次刷新');
+          if (!tokenValid) {
+            const errorMsg = '無法獲得有效的 access_token，停止外撥流程';
+            await this.setError(errorMsg);
+            errorWithTimestamp(errorMsg);
+            this.tokenRefreshState = 0; // 重置狀態
+            return;
+          }
+
+          // 同步更新當前實例的 token（如果 TokenManager 中的 token 被更新了）
+          const currentToken = this.tokenManager.getAccessToken();
+          if (currentToken && currentToken !== this.access_token) {
+            this.access_token = currentToken;
+            this.lastTokenRefreshTime = Date.now(); // 記錄刷新時間
+            logWithTimestamp('✅ Token 已更新，將非同步重新建立 WebSocket 連接');
+
+            // 使用 Flag 防止重複刷新 WebSocket 連接
+            if (!this.isRefreshingToken) {
+              this.isRefreshingToken = true;  // 🔒 立即鎖定
+              logWithTimestamp('🔒 設置 isRefreshingToken = true，防止重複刷新');
+
+              // 使用 setImmediate 延遲執行
+              setImmediate(() => {
+                this.handleTokenUpdateWebSocketReconnect(broadcastWs)
+                  .catch(error => {
+                    errorWithTimestamp('Token 更新後非同步重連 WebSocket 失敗:', error);
+                  })
+                  .finally(() => {
+                    this.isRefreshingToken = false;  // 🔓 解鎖
+                    logWithTimestamp('🔓 設置 isRefreshingToken = false，允許下次刷新');
+                  });
               });
-          });
-        } else {
-          logWithTimestamp('⏭️ 已有 WebSocket 重連接在進行中，跳過此次刷新');
+            } else {
+              logWithTimestamp('⏭️ 已有 WebSocket 重連接在進行中，跳過此次刷新');
+            }
+          } else {
+            logWithTimestamp('ℹ️ Token 未變更，無需重連 WebSocket');
+          }
+        } finally {
+          this.tokenRefreshState = 0; // 重置狀態為 idle
+          logWithTimestamp(`[✅ Token 檢查完成] 狀態已重置為 idle`);
         }
-        // 注意：分機狀態管理器現在使用管理員 token 自動管理，不需要同步更新
       }
 
       // 步驟三: 獲取並更新 caller 資訊
