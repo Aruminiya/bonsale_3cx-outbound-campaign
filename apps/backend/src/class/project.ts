@@ -140,10 +140,10 @@ export default class Project {
   // 分機級別 Mutex Map - 確保每個分機獨立上鎖，提高並發性能
   private readonly extensionMutexMap: Map<string, Mutex> = new Map(); // Key: 分機號碼(dn), Value: 該分機的互斥鎖
 
-  // Token 刷新狀態機制 - 防止高併發下重複刷新
-  // 0: idle (未刷新中) | 1: checking (檢查中) | 2: refreshing (刷新中)
+  // Token 刷新狀態機制 - 防止高併發下重複檢查
+  // 0: idle (空閒) | 1: checking (檢查中) | 2: refreshing (刷新中)
   private tokenRefreshState: 0 | 1 | 2 = 0;
-  private lastTokenRefreshTime: number = 0; // 最後一次刷新時間戳
+  private lastTokenCheckTime: number = 0; // 最後一次檢查時間戳（無論結果如何都更新）
 
   // 🆕 Token 刷新 Flag - 防止重複刷新 WebSocket 連接
   private isRefreshingToken: boolean = false;
@@ -760,23 +760,24 @@ export default class Project {
         return;
       }
 
-      // 🔄 狀態機制：防止高併發下多個 WS 事件重複調用 checkAndRefreshToken()
-      // 只有第一個事件會執行刷新，其他事件會等待或略過
-      const MIN_REFRESH_INTERVAL = 5000; // 最小刷新間隔 5秒
+      // 🔄 狀態機制：防止高併發下多個 WS 事件重複檢查 token
+      // 只有第一個符合條件的事件會執行檢查，其他事件直接跳過
+      // Token 有效期通常 1-2 小時，5分鐘檢查一次足夠，避免無謂的 API 調用
+      const MIN_CHECK_INTERVAL = 300000; // 最小檢查間隔 5 分鐘（300秒）
       const now = Date.now();
-      const timeSinceLastRefresh = now - this.lastTokenRefreshTime;
+      const timeSinceLastCheck = now - this.lastTokenCheckTime;
 
       // 決定是否需要檢查 token
       let shouldCheckToken = false;
       if (this.tokenRefreshState === 0) {
-        // 狀態: idle - 可以檢查
-        if (timeSinceLastRefresh > MIN_REFRESH_INTERVAL) {
+        // 狀態: idle - 檢查時間條件
+        if (timeSinceLastCheck > MIN_CHECK_INTERVAL) {
           shouldCheckToken = true;
           this.tokenRefreshState = 1; // 轉為 checking
-          logWithTimestamp(`[🔵 Token 檢查] 進入檢查狀態，距上次刷新: ${timeSinceLastRefresh}ms`);
+          logWithTimestamp(`[🔵 Token 檢查] 進入檢查狀態，距上次檢查: ${timeSinceLastCheck}ms`);
         }
       } else if (this.tokenRefreshState === 1 || this.tokenRefreshState === 2) {
-        // 狀態: checking 或 refreshing - 其他事件等待或使用快取
+        // 狀態: checking 或 refreshing - 其他事件直接跳過
         logWithTimestamp(`[⏳ Token 狀態] 當前狀態: ${this.tokenRefreshState === 1 ? 'checking' : 'refreshing'}，跳過此次檢查`);
         shouldCheckToken = false;
       }
@@ -801,7 +802,6 @@ export default class Project {
           const currentToken = this.tokenManager.getAccessToken();
           if (currentToken && currentToken !== this.access_token) {
             this.access_token = currentToken;
-            this.lastTokenRefreshTime = Date.now(); // 記錄刷新時間
             logWithTimestamp('✅ Token 已更新，將非同步重新建立 WebSocket 連接');
 
             // 使用 Flag 防止重複刷新 WebSocket 連接
@@ -827,6 +827,9 @@ export default class Project {
             logWithTimestamp('ℹ️ Token 未變更，無需重連 WebSocket');
           }
         } finally {
+          // 無論檢查結果如何，都更新檢查時間戳
+          // 這樣高頻率請求不會導致時間戳不斷被刷新
+          this.lastTokenCheckTime = Date.now();
           this.tokenRefreshState = 0; // 重置狀態為 idle
           logWithTimestamp(`[✅ Token 檢查完成] 狀態已重置為 idle`);
         }
