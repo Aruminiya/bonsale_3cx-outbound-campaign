@@ -119,10 +119,10 @@ export default class Project {
   error: string | null = null;
   access_token: string | null;
   caller: Array<Caller> | null;
-  latestCallRecord: Array<CallRecord> = []; // 保存當前撥打記錄
+  latestCallRecord: Map<string, CallRecord> = new Map(); // 保存當前撥打記錄 (Key: dn/分機號碼)
   agentQuantity: number | 0;
   recurrence: string | null = null; // 新增 recurrence 屬性
-  callRestriction: CallRestriction[] = []; // 新增 callRestriction 屬性
+  callRestriction: Map<string, CallRestriction> = new Map(); // 新增 callRestriction 屬性 (Key: id)
   callerExtensionLastExecutionTime: CallerExtensionLastExecutionTime = {}; // 分機最新執行時間記錄
   private previousCallRecord: Array<CallRecord> | null = null; // 保存前一筆撥打記錄
   private wsManager: WebSocketManager | null = null;
@@ -166,10 +166,10 @@ export default class Project {
     error: string | null = null,
     access_token: string | null = null,
     caller: Array<Caller> | null = null,
-    latestCallRecord: Array<CallRecord> = [],
+    latestCallRecord: Array<CallRecord> | Map<string, CallRecord> = new Map(),
     agentQuantity: number | 0,
     recurrence: string | null = null,
-    callRestriction: CallRestriction[] = [],
+    callRestriction: CallRestriction[] | Map<string, CallRestriction> = new Map(),
     callerExtensionLastExecutionTime: CallerExtensionLastExecutionTime = {}
   ) {
     this.grant_type = 'client_credentials';
@@ -183,10 +183,12 @@ export default class Project {
     this.error = error;
     this.access_token = access_token;
     this.caller = caller;
-    this.latestCallRecord = latestCallRecord;
+    // 如果接收到陣列，轉換為 Map；如果已是 Map，直接使用
+    this.latestCallRecord = latestCallRecord instanceof Map ? latestCallRecord : this._convertArrayToMapForLatestCallRecord(latestCallRecord);
     this.agentQuantity = agentQuantity;
     this.recurrence = recurrence;
-    this.callRestriction = callRestriction;
+    // 如果接收到陣列，轉換為 Map；如果已是 Map，直接使用
+    this.callRestriction = callRestriction instanceof Map ? callRestriction : this._convertArrayToMapForCallRestriction(callRestriction);
     this.callerExtensionLastExecutionTime = callerExtensionLastExecutionTime;
 
     // 初始化 TokenManager
@@ -207,6 +209,38 @@ export default class Project {
   }
 
   /**
+   * 將 CallRecord 陣列轉換為 Map
+   * @param records CallRecord 陣列
+   * @returns Map<string, CallRecord>
+   */
+  private _convertArrayToMapForLatestCallRecord(records: Array<CallRecord>): Map<string, CallRecord> {
+    const map = new Map<string, CallRecord>();
+    if (Array.isArray(records) && records.length > 0) {
+      records.forEach(record => {
+        if (record && record.dn) {
+          map.set(record.dn, record);
+        }
+      });
+    }
+    return map;
+  }
+
+  /**
+   * 將 CallRestriction 陣列轉換為 Map
+   * @param restrictions CallRestriction 陣列
+   * @returns Map<string, CallRestriction>
+   */
+  private _convertArrayToMapForCallRestriction(restrictions: CallRestriction[]): Map<string, CallRestriction> {
+    const map = new Map<string, CallRestriction>();
+    if (Array.isArray(restrictions) && restrictions.length > 0) {
+      restrictions.forEach(restriction => {
+        map.set(restriction.id, restriction);
+      });
+    }
+    return map;
+  }
+
+  /**
    * 初始化外撥專案（靜態方法）
    * @param projectData 專案資料
    * @returns Project 實例
@@ -217,7 +251,7 @@ export default class Project {
     client_id: string;
     client_secret: string;
     recurrence: string | null;
-    callRestriction: CallRestriction[];
+    callRestriction: CallRestriction[] | Map<string, CallRestriction>;
   }): Promise<Project> {
     const { projectId, callFlowId, client_id, client_secret, recurrence, callRestriction } = projectData;
 
@@ -836,12 +870,11 @@ export default class Project {
       let hasUpdate = false;
 
       // 遍歷所有當前撥打記錄
-      for (let i = 0; i < this.latestCallRecord.length; i++) {
-        const currentCall = this.latestCallRecord[i];
-        if (!currentCall || !currentCall.dn) continue;
+      for (const [dn, currentCall] of this.latestCallRecord.entries()) {
+        if (!currentCall || !dn) continue;
 
         // 找到對應的分機資訊
-        const callerInfo = this.caller.find(caller => caller.dn === currentCall.dn);
+        const callerInfo = this.caller.find(caller => caller.dn === dn);
 
         if (callerInfo && callerInfo.participants && callerInfo.participants.length > 0) {
           const participant = callerInfo.participants[0];
@@ -850,10 +883,10 @@ export default class Project {
           // 如果狀態有變化，更新
           if (currentCall.status !== newStatus) {
             const oldStatus = currentCall.status;
-            this.latestCallRecord[i] = { ...currentCall, status: newStatus };
+            this.latestCallRecord.set(dn, { ...currentCall, status: newStatus });
             hasUpdate = true;
 
-            logWithTimestamp(`撥打狀態更新 - 分機: ${currentCall.dn}, 客戶: ${currentCall.memberName}, 狀態: ${oldStatus} -> ${newStatus}`);
+            logWithTimestamp(`撥打狀態更新 - 分機: ${dn}, 客戶: ${currentCall.memberName}, 狀態: ${oldStatus} -> ${newStatus}`);
           }
         }
       }
@@ -918,13 +951,13 @@ export default class Project {
     }
 
     // 檢查是否有 callRestriction 限制撥打時間
-    if (this.callRestriction && this.callRestriction.length > 0) {
+    if (this.callRestriction && this.callRestriction.size > 0) {
       // callRestriction 的時間格式是 UTC+0，直接使用 UTC 時間比較
       const now = new Date();
       const currentTimeInMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
 
       // 檢查當前時間是否在任何一個限制時間範圍內
-      const isInRestrictedTime = this.callRestriction.some(restriction => {
+      const isInRestrictedTime = Array.from(this.callRestriction.values()).some(restriction => {
         const [startHour, startMinute] = restriction.startTime.split(':').map(Number);
         const [stopHour, stopMinute] = restriction.stopTime.split(':').map(Number);
 
@@ -1126,19 +1159,18 @@ export default class Project {
 
         // 有撥號名單，進行撥打
         if (nextCallItem) {
-          // 初始化陣列（如果需要）
+          // 初始化 Map（如果需要）
           if (!this.latestCallRecord) {
-            this.latestCallRecord = [];
+            this.latestCallRecord = new Map();
           }
           if (!this.previousCallRecord) {
             this.previousCallRecord = [];
           }
 
           // 檢查該分機是否已有撥打記錄
-          const existingCallIndex = this.latestCallRecord.findIndex(call => call?.dn === dn);
-          if (existingCallIndex >= 0) {
+          const existingCall = this.latestCallRecord.get(dn);
+          if (existingCall) {
             // 如果該分機已有撥打記錄，移動到 previousCallRecord
-            const existingCall = this.latestCallRecord[existingCallIndex];
             if (existingCall) {
               // 檢查 previousCallRecord 中是否已有該分機的舊記錄
               const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
@@ -1184,12 +1216,8 @@ export default class Project {
           };
 
           // 更新或添加當前撥打記錄
-          if (existingCallIndex >= 0) {
-            this.latestCallRecord[existingCallIndex] = newCallRecord;
-          } else {
-            this.latestCallRecord.push(newCallRecord);
-          }
-          
+          this.latestCallRecord.set(dn, newCallRecord);
+
           // 同步更新到 Redis
           await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
           
@@ -1199,54 +1227,51 @@ export default class Project {
         } else {
           // 沒有撥號名單，但要檢查該分機是否有當前撥打記錄需要處理
           logWithTimestamp(`專案 ${this.projectId} 的撥號名單已空，分機 ${dn} 暫無可撥打號碼`);
-          
-          // 初始化陣列（如果需要）
+
+          // 初始化 Map（如果需要）
           if (!this.latestCallRecord) {
-            this.latestCallRecord = [];
+            this.latestCallRecord = new Map();
           }
           if (!this.previousCallRecord) {
             this.previousCallRecord = [];
           }
 
           // 檢查該分機是否有當前撥打記錄需要移動到 previousCallRecord
-          const existingCallIndex = this.latestCallRecord.findIndex(call => call?.dn === dn);
-          if (existingCallIndex >= 0) {
-            const existingCall = this.latestCallRecord[existingCallIndex];
-            if (existingCall) {
-              // 檢查 previousCallRecord 中是否已有該分機的舊記錄
-              const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
+          const existingCall = this.latestCallRecord.get(dn);
+          if (existingCall) {
+            // 檢查 previousCallRecord 中是否已有該分機的舊記錄
+            const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
 
-              // 如果已經有舊記錄，需要先處理它，避免被覆蓋而遺失
-              if (prevCallIndex >= 0) {
-                const oldRecord = this.previousCallRecord[prevCallIndex];
-                if (oldRecord) {
-                  logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
+            // 如果已經有舊記錄，需要先處理它，避免被覆蓋而遺失
+            if (prevCallIndex >= 0) {
+              const oldRecord = this.previousCallRecord[prevCallIndex];
+              if (oldRecord) {
+                logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
 
-                  try {
-                    // 立即處理舊記錄
-                    await this.recordBonsaleCallResult(oldRecord);
-                    logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
-                  } catch (error) {
-                    errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
-                    // 即使處理失敗，也繼續執行，避免阻塞流程
-                  }
+                try {
+                  // 立即處理舊記錄
+                  await this.recordBonsaleCallResult(oldRecord);
+                  logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
+                } catch (error) {
+                  errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
+                  // 即使處理失敗，也繼續執行，避免阻塞流程
                 }
-
-                // 然後用新記錄覆蓋
-                this.previousCallRecord[prevCallIndex] = { ...existingCall };
-              } else {
-                // 沒有舊記錄，直接添加新記錄
-                this.previousCallRecord.push({ ...existingCall });
               }
 
-              // 從 latestCallRecord 中移除
-              this.latestCallRecord.splice(existingCallIndex, 1);
-
-              // 同步更新到 Redis
-              await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
-
-              logWithTimestamp(`保存分機 ${dn} 的最後一筆撥打記錄到 previousCallRecord - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
+              // 然後用新記錄覆蓋
+              this.previousCallRecord[prevCallIndex] = { ...existingCall };
+            } else {
+              // 沒有舊記錄，直接添加新記錄
+              this.previousCallRecord.push({ ...existingCall });
             }
+
+            // 從 latestCallRecord 中移除
+            this.latestCallRecord.delete(dn);
+
+            // 同步更新到 Redis
+            await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
+
+            logWithTimestamp(`保存分機 ${dn} 的最後一筆撥打記錄到 previousCallRecord - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
           }
           
           // 即使沒有撥號名單，也要呼叫 makeOutboundCall 來處理前一通電話的結果
@@ -2091,17 +2116,17 @@ export default class Project {
       logWithTimestamp(`🔄 專案 ${this.projectId} 開始處理未完成的通話記錄`);
 
       // 檢查是否有未處理的 latestCallRecord
-      if (this.latestCallRecord && this.latestCallRecord.length > 0) {
-        logWithTimestamp(`📞 發現 ${this.latestCallRecord.length} 筆未處理的通話記錄`);
-        
+      if (this.latestCallRecord && this.latestCallRecord.size > 0) {
+        logWithTimestamp(`📞 發現 ${this.latestCallRecord.size} 筆未處理的通話記錄`);
+
         // 將所有 latestCallRecord 移動到 previousCallRecord 以便處理
-        for (const callRecord of this.latestCallRecord) {
+        for (const callRecord of this.latestCallRecord.values()) {
           if (callRecord) {
             // 初始化 previousCallRecord（如果需要）
             if (!this.previousCallRecord) {
               this.previousCallRecord = [];
             }
-            
+
             // 檢查是否已存在該分機的記錄
             const existingIndex = this.previousCallRecord.findIndex(call => call?.dn === callRecord.dn);
             if (existingIndex >= 0) {
@@ -2109,14 +2134,14 @@ export default class Project {
             } else {
               this.previousCallRecord.push({ ...callRecord });
             }
-            
+
             logWithTimestamp(`📋 移動通話記錄到待處理清單 - 分機: ${callRecord.dn}, 客戶: ${callRecord.memberName} (${callRecord.customerId})`);
           }
         }
-        
+
         // 清空 latestCallRecord
-        this.latestCallRecord = [];
-        
+        this.latestCallRecord.clear();
+
         // 更新到 Redis
         await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
       }

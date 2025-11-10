@@ -3,14 +3,14 @@ import Project from './project';
 import { logWithTimestamp, errorWithTimestamp } from '../util/timestamp';
 
 // 定義 CallRestriction 型別
-type CallRestriction = {
-  id: string;
-  projectAutoDialId: string;
-  startTime: string;
-  stopTime: string;
-  createdAt: string;
-  createdUserId: string;
-};
+// type CallRestriction = {
+//   id: string;
+//   projectAutoDialId: string;
+//   startTime: string;
+//   stopTime: string;
+//   createdAt: string;
+//   createdUserId: string;
+// };
 
 // 定義當前撥打記錄的類型
 type CurrentCallRecord = Array<{
@@ -23,6 +23,16 @@ type CurrentCallRecord = Array<{
   projectId: string;
   dn?: string; // 撥打的分機號碼
   dialTime?: string; // 撥打時間
+} | null> | Map<string, {
+  customerId: string;
+  memberName: string;
+  phone: string;
+  description: string | null;
+  description2: string | null;
+  status: "Dialing" | "Connected";
+  projectId: string;
+  dn: string;
+  dialTime: string;
 } | null> | null;
 
 export class ProjectManager {
@@ -47,10 +57,10 @@ export class ProjectManager {
         error: project.error || '',
         access_token: project.access_token || '',
         caller: project.caller ? JSON.stringify(project.caller) : '',
-        latestCallRecord: project.latestCallRecord ? JSON.stringify(project.latestCallRecord) : '',
+        latestCallRecord: project.latestCallRecord ? JSON.stringify(project.latestCallRecord instanceof Map ? Array.from(project.latestCallRecord.entries()) : project.latestCallRecord) : '',
         agentQuantity: project.agentQuantity?.toString() || '0',
         recurrence: project.recurrence || '',
-        callRestriction: project.callRestriction ? JSON.stringify(project.callRestriction) : JSON.stringify([]),
+        callRestriction: project.callRestriction ? JSON.stringify(project.callRestriction instanceof Map ? Array.from(project.callRestriction.entries()) : project.callRestriction) : JSON.stringify([]),
         callerExtensionLastExecutionTime: project.callerExtensionLastExecutionTime ? JSON.stringify(project.callerExtensionLastExecutionTime) : JSON.stringify({}),
         // ws_3cx 不儲存，因為 WebSocket 無法序列化
         createdAt: new Date().toISOString(),
@@ -95,10 +105,18 @@ export class ProjectManager {
         projectData.error || null,
         projectData.access_token || null,
         projectData.caller ? JSON.parse(projectData.caller) : null,
-        projectData.latestCallRecord =  projectData.latestCallRecord ? JSON.parse(projectData.latestCallRecord) : [],
+        projectData.latestCallRecord ? (() => {
+          const parsed = JSON.parse(projectData.latestCallRecord);
+          // 檢查是否為 Map entries 格式 [[key, value], ...]
+          return Array.isArray(parsed) && parsed.length > 0 && Array.isArray(parsed[0]) ? new Map(parsed) : parsed;
+        })() : new Map(),
         parseInt(projectData.agentQuantity) || 0,
         projectData.recurrence || null,
-        projectData.callRestriction ? JSON.parse(projectData.callRestriction) : [] as CallRestriction[],
+        projectData.callRestriction ? (() => {
+          const parsed = JSON.parse(projectData.callRestriction);
+          // 檢查是否為 Map entries 格式 [[key, value], ...]
+          return Array.isArray(parsed) && parsed.length > 0 && Array.isArray(parsed[0]) ? new Map(parsed) : parsed;
+        })() : new Map(),
         projectData.callerExtensionLastExecutionTime ? JSON.parse(projectData.callerExtensionLastExecutionTime) : {}
       );
 
@@ -212,8 +230,13 @@ export class ProjectManager {
   static async updateProjectLatestCallRecord(projectId: string, latestCallRecord: CurrentCallRecord): Promise<void> {
     try {
       const projectKey = `${this.PROJECT_PREFIX}${projectId}`;
+      // 如果是 Map，轉換為 entries 格式再序列化
+      const serializedRecord = latestCallRecord instanceof Map
+        ? JSON.stringify(Array.from(latestCallRecord.entries()))
+        : JSON.stringify(latestCallRecord);
+
       await redisClient.hSet(projectKey, {
-        latestCallRecord: JSON.stringify(latestCallRecord),
+        latestCallRecord: serializedRecord,
         updatedAt: new Date().toISOString()
       });
       
