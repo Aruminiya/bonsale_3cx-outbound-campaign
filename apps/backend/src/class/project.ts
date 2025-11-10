@@ -885,8 +885,12 @@ export default class Project {
    */
   private async updateCallerInfo(): Promise<void> {
     try {
-      // 獲取新的 caller 資訊
-      const caller = await getCaller(this.access_token!);
+      // 獲取新的 caller 資訊（使用 TokenManager 防止讀舊 token 競態）
+      const accessToken = this.tokenManager.getAccessToken();
+      if (!accessToken) {
+        throw new Error('無效的 access token');
+      }
+      const caller = await getCaller(accessToken);
       if (!caller.success) {
         throw new Error(`獲取呼叫者資訊失敗: ${caller.error}`);
       }
@@ -919,15 +923,21 @@ export default class Project {
 
       let hasUpdate = false;
 
-      // 遍歷所有當前撥打記錄
-      for (const [dn, currentCall] of this.latestCallRecord.entries()) {
+      // 🔒 製作 caller 的快照，防止 updateCallerInfo 在迭代期間修改 this.caller
+      const callerSnapshot = [...this.caller];
+
+      // 🔒 製作 latestCallRecord 的快照，防止 processCallerOutbound 在迭代期間修改 Map
+      const recordEntries = Array.from(this.latestCallRecord.entries());
+
+      // 遍歷所有當前撥打記錄（使用快照，不受 processCallerOutbound 影響）
+      for (const [dn, currentCall] of recordEntries) {
         if (!currentCall || !dn) continue;
 
         // 🔒 使用分機級別的 Mutex 保護狀態更新，避免與 processCallerOutbound 的競態條件
         const extensionMutex = this._getExtensionMutex(dn);
         await extensionMutex.runExclusive(async () => {
-          // 找到對應的分機資訊
-          const callerInfo = this.caller!.find(caller => caller.dn === dn);
+          // 找到對應的分機資訊（使用快照，不受 updateCallerInfo 影響）
+          const callerInfo = callerSnapshot.find(caller => caller.dn === dn);
 
           if (callerInfo && callerInfo.participants && callerInfo.participants.length > 0) {
             const participant = callerInfo.participants[0];
