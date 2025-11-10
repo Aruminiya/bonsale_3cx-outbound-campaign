@@ -137,8 +137,8 @@ export default class Project {
   private readonly idleCheckBackoffFactor: number = IDLE_CHECK_BACKOFF_FACTOR || 1.5; // 指數退避倍數 預設 1.5 倍
   private broadcastWsRef: WebSocketServer | undefined = undefined; // 保存 WebSocket 引用
 
-  // 全域 Mutex - 保護 latestCallRecord 和 previousCallRecord 的原子性
-  private readonly processCallerMutex: Mutex = new Mutex(); // 全域互斥鎖，確保只有一個分機能同時執行 processCallerOutbound
+  // 分機級別 Mutex Map - 確保每個分機獨立上鎖，提高並發性能
+  private readonly extensionMutexMap: Map<string, Mutex> = new Map(); // Key: 分機號碼(dn), Value: 該分機的互斥鎖
 
   // 🆕 Token 刷新 Flag - 防止重複刷新 WebSocket 連接
   private isRefreshingToken: boolean = false;
@@ -238,6 +238,19 @@ export default class Project {
       });
     }
     return map;
+  }
+
+  /**
+   * 獲取或創建分機專屬的 Mutex
+   * @param dn 分機號碼
+   * @returns 該分機的 Mutex 實例
+   */
+  private _getExtensionMutex(dn: string): Mutex {
+    if (!this.extensionMutexMap.has(dn)) {
+      this.extensionMutexMap.set(dn, new Mutex());
+      logWithTimestamp(`🔒 為分機 ${dn} 創建互斥鎖`);
+    }
+    return this.extensionMutexMap.get(dn)!;
   }
 
   /**
@@ -714,119 +727,114 @@ export default class Project {
     isInitCall: boolean = false,
     participantSnapshot: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null = null
   ): Promise<void> {
-    // 🔒 使用 Mutex 保護整個方法，確保初始撥號和 WebSocket 事件序列化執行
+    // 注意：全域 Mutex 已移除，改為在 processCallerOutbound 使用分機級別的 Mutex
+    // 這樣允許不同分機並行處理，避免全域鎖導致的排隊瓶頸
     const outboundCallStartTime = Date.now();
-    logWithTimestamp(`[🔴 outboundCall 嘗試獲取 Mutex] eventEntity: ${eventEntity}`);
+    logWithTimestamp(`[🔴 outboundCall 開始] eventEntity: ${eventEntity}`);
 
-    await this.processCallerMutex.runExclusive(async () => {
-      const mutexAcquiredTime = Date.now();
-      logWithTimestamp(`[🔴 outboundCall 已獲取 Mutex] 等待時間: ${mutexAcquiredTime - outboundCallStartTime}ms`);
+    try {
+      logWithTimestamp('[🔴 outboundCall 開始執行邏輯]', {
+        eventEntity,
+        isExecuteOutboundCalls,
+        isInitCall
+      });
+      // 清除之前的資訊提示（如果有的話）
+      await this.clearErrorWarningInfo();
 
-      try {
-        logWithTimestamp('[🔴 outboundCall 開始執行邏輯]', {
-          eventEntity,
-          isExecuteOutboundCalls,
-          isInitCall
-        });
-        // 清除之前的資訊提示（如果有的話）
-        await this.clearErrorWarningInfo();
-        
-        // 步驟一: 檢查專案狀態
-        if (this.state !== 'active') {
-          logWithTimestamp('專案狀態不符合外撥條件:', this.state);
-          return;
-        }
-        
-        // 步驟二: 檢查並刷新 access_token
-        if (!this.access_token) {
-          const errorMsg = '當前專案缺少 access_token';
-          await this.setError(errorMsg);
-          errorWithTimestamp(errorMsg);
-          return;
-        }
-
-        // 檢測 token 是否到期並自動刷新
-        const tokenValid = await this.tokenManager.checkAndRefreshToken();
-        if (!tokenValid) {
-          const errorMsg = '無法獲得有效的 access_token，停止外撥流程';
-          await this.setError(errorMsg);
-          errorWithTimestamp(errorMsg);
-          return;
-        }
-
-        // 同步更新當前實例的 token（如果 TokenManager 中的 token 被更新了）
-        const currentToken = this.tokenManager.getAccessToken();
-        if (currentToken && currentToken !== this.access_token) {
-          this.access_token = currentToken;
-          // Token 已更新，但不要在 Mutex 內重新建立 WebSocket 連接，避免死鎖
-          // 改為異步處理，讓 WebSocket 重連接在 Mutex 釋放後進行
-          logWithTimestamp('⚠️ Token 已更新，將在 Mutex 釋放後重新建立 WebSocket 連接');
-
-          // 🆕 使用 Flag 防止重複刷新 WebSocket 連接
-          if (!this.isRefreshingToken) {
-            this.isRefreshingToken = true;  // 🔒 立即鎖定
-            logWithTimestamp('🔒 設置 isRefreshingToken = true，防止重複刷新');
-
-            // 使用 setImmediate 延遲執行，確保 Mutex 先釋放
-            setImmediate(() => {
-              this.handleTokenUpdateWebSocketReconnect(broadcastWs)
-                .catch(error => {
-                  errorWithTimestamp('Token 更新後非同步重連 WebSocket 失敗:', error);
-                })
-                .finally(() => {
-                  this.isRefreshingToken = false;  // 🔓 解鎖
-                  logWithTimestamp('🔓 設置 isRefreshingToken = false，允許下次刷新');
-                });
-            });
-          } else {
-            logWithTimestamp('⏭️ 已有 WebSocket 重連接在進行中，跳過此次刷新');
-          }
-          // 注意：分機狀態管理器現在使用管理員 token 自動管理，不需要同步更新
-        }
-        
-        // 步驟三: 獲取並更新 caller 資訊
-        await this.updateCallerInfo();
-
-        // 步驟四: 更新當前撥打記錄的狀態
-        await this.updateLatestCallRecordStatus();
-
-        // 步驟五: 廣播專案資訊
-        if (broadcastWs) {
-          await this.broadcastProjectInfo(broadcastWs);
-        }
-        
-        // 步驟六: 執行外撥邏輯
-        // 是否初始撥號
-        if (isInitCall) {
-          await this.executeOutboundCalls(eventEntity, true, participantSnapshot);
-          return;
-        }
-        // 確認是否要撥號
-        if (isExecuteOutboundCalls) {
-          await this.executeOutboundCalls(eventEntity, false, participantSnapshot);
-          return;
-        }
-
-      } catch (error) {
-        const errorMsg = `外撥流程發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
-        await this.setError(errorMsg);
-        errorWithTimestamp('外撥流程發生錯誤:', error);
-        
-        // 廣播更新的專案資訊（包含錯誤）
-        if (broadcastWs) {
-          try {
-            await this.broadcastProjectInfo(broadcastWs);
-          } catch (broadcastError) {
-            errorWithTimestamp('廣播錯誤資訊失敗:', broadcastError);
-          }
-        }
-
-        throw error;
+      // 步驟一: 檢查專案狀態
+      if (this.state !== 'active') {
+        logWithTimestamp('專案狀態不符合外撥條件:', this.state);
+        return;
       }
 
-      const mutexReleaseTime = Date.now();
-      logWithTimestamp(`[🔴 outboundCall Mutex 釋放] 總耗時: ${mutexReleaseTime - outboundCallStartTime}ms`);
-    });
+      // 步驟二: 檢查並刷新 access_token
+      if (!this.access_token) {
+        const errorMsg = '當前專案缺少 access_token';
+        await this.setError(errorMsg);
+        errorWithTimestamp(errorMsg);
+        return;
+      }
+
+      // 檢測 token 是否到期並自動刷新
+      const tokenValid = await this.tokenManager.checkAndRefreshToken();
+      if (!tokenValid) {
+        const errorMsg = '無法獲得有效的 access_token，停止外撥流程';
+        await this.setError(errorMsg);
+        errorWithTimestamp(errorMsg);
+        return;
+      }
+
+      // 同步更新當前實例的 token（如果 TokenManager 中的 token 被更新了）
+      const currentToken = this.tokenManager.getAccessToken();
+      if (currentToken && currentToken !== this.access_token) {
+        this.access_token = currentToken;
+        // Token 已更新，讓 WebSocket 重連接非同步進行
+        logWithTimestamp('⚠️ Token 已更新，將非同步重新建立 WebSocket 連接');
+
+        // 🆕 使用 Flag 防止重複刷新 WebSocket 連接
+        if (!this.isRefreshingToken) {
+          this.isRefreshingToken = true;  // 🔒 立即鎖定
+          logWithTimestamp('🔒 設置 isRefreshingToken = true，防止重複刷新');
+
+          // 使用 setImmediate 延遲執行
+          setImmediate(() => {
+            this.handleTokenUpdateWebSocketReconnect(broadcastWs)
+              .catch(error => {
+                errorWithTimestamp('Token 更新後非同步重連 WebSocket 失敗:', error);
+              })
+              .finally(() => {
+                this.isRefreshingToken = false;  // 🔓 解鎖
+                logWithTimestamp('🔓 設置 isRefreshingToken = false，允許下次刷新');
+              });
+          });
+        } else {
+          logWithTimestamp('⏭️ 已有 WebSocket 重連接在進行中，跳過此次刷新');
+        }
+        // 注意：分機狀態管理器現在使用管理員 token 自動管理，不需要同步更新
+      }
+
+      // 步驟三: 獲取並更新 caller 資訊
+      await this.updateCallerInfo();
+
+      // 步驟四: 更新當前撥打記錄的狀態
+      await this.updateLatestCallRecordStatus();
+
+      // 步驟五: 廣播專案資訊
+      if (broadcastWs) {
+        await this.broadcastProjectInfo(broadcastWs);
+      }
+
+      // 步驟六: 執行外撥邏輯
+      // 是否初始撥號
+      if (isInitCall) {
+        await this.executeOutboundCalls(eventEntity, true, participantSnapshot);
+        return;
+      }
+      // 確認是否要撥號
+      if (isExecuteOutboundCalls) {
+        await this.executeOutboundCalls(eventEntity, false, participantSnapshot);
+        return;
+      }
+
+    } catch (error) {
+      const errorMsg = `外撥流程發生錯誤: ${error instanceof Error ? error.message : String(error)}`;
+      await this.setError(errorMsg);
+      errorWithTimestamp('外撥流程發生錯誤:', error);
+
+      // 廣播更新的專案資訊（包含錯誤）
+      if (broadcastWs) {
+        try {
+          await this.broadcastProjectInfo(broadcastWs);
+        } catch (broadcastError) {
+          errorWithTimestamp('廣播錯誤資訊失敗:', broadcastError);
+        }
+      }
+
+      throw error;
+    }
+
+    const outboundCallEndTime = Date.now();
+    logWithTimestamp(`[🔴 outboundCall 完成] 總耗時: ${outboundCallEndTime - outboundCallStartTime}ms`);
   }
 
   /**
@@ -873,22 +881,27 @@ export default class Project {
       for (const [dn, currentCall] of this.latestCallRecord.entries()) {
         if (!currentCall || !dn) continue;
 
-        // 找到對應的分機資訊
-        const callerInfo = this.caller.find(caller => caller.dn === dn);
+        // 🔒 使用分機級別的 Mutex 保護狀態更新，避免與 processCallerOutbound 的競態條件
+        const extensionMutex = this._getExtensionMutex(dn);
+        await extensionMutex.runExclusive(async () => {
+          // 找到對應的分機資訊
+          const callerInfo = this.caller!.find(caller => caller.dn === dn);
 
-        if (callerInfo && callerInfo.participants && callerInfo.participants.length > 0) {
-          const participant = callerInfo.participants[0];
-          const newStatus = participant.status;
+          if (callerInfo && callerInfo.participants && callerInfo.participants.length > 0) {
+            const participant = callerInfo.participants[0];
+            const newStatus = participant.status;
 
-          // 如果狀態有變化，更新
-          if (currentCall.status !== newStatus) {
-            const oldStatus = currentCall.status;
-            this.latestCallRecord.set(dn, { ...currentCall, status: newStatus });
-            hasUpdate = true;
+            // 再次檢查當前記錄是否存在（可能在等待 Mutex 期間被刪除）
+            const currentCallRecord = this.latestCallRecord.get(dn);
+            if (currentCallRecord && currentCallRecord.status !== newStatus) {
+              const oldStatus = currentCallRecord.status;
+              this.latestCallRecord.set(dn, { ...currentCallRecord, status: newStatus });
+              hasUpdate = true;
 
-            logWithTimestamp(`撥打狀態更新 - 分機: ${dn}, 客戶: ${currentCall.memberName}, 狀態: ${oldStatus} -> ${newStatus}`);
+              logWithTimestamp(`撥打狀態更新 - 分機: ${dn}, 客戶: ${currentCallRecord.memberName}, 狀態: ${oldStatus} -> ${newStatus}`);
+            }
           }
-        }
+        });
       }
 
       // 如果有任何更新，同步到 Redis
@@ -1146,7 +1159,13 @@ export default class Project {
     }
     // 注意：Mutex 保護已移到 executeOutboundCalls 外層
     // 該方法已被 executeOutboundCalls 的 Mutex 保護，無需重複加鎖（避免嵌套死鎖）
-    try {
+    // 🔒 使用分機級別的 Mutex 確保該分機的邏輯序列執行，不同分機可並行
+    const extensionMutex = this._getExtensionMutex(dn);
+    const mutexStartTime = Date.now();
+    await extensionMutex.runExclusive(async () => {
+      const mutexAcquiredTime = Date.now();
+      logWithTimestamp(`[🔵 processCallerOutbound] 分機 ${dn} 獲取 Mutex，等待時間: ${mutexAcquiredTime - mutexStartTime}ms`);
+      try {
         // 從 Redis 獲取下一個要撥打的電話號碼
         logWithTimestamp(`[🔵 processCallerOutbound] 準備從 Redis 取得下一通電話...`);
         const getNextCallStartTime = Date.now();
@@ -1285,6 +1304,9 @@ export default class Project {
 
       const processEndTime = Date.now();
       logWithTimestamp(`[🔵 processCallerOutbound 完成] dn: ${dn}, 耗時: ${processEndTime - processStartTime}ms`);
+    
+    });
+
   }
 
   /**
@@ -1394,7 +1416,7 @@ export default class Project {
   private async recordBonsaleCallResult(previousCallRecord: CallRecord): Promise<void> {
     const recordStartTime = Date.now();
     logWithTimestamp(`[🟢 recordBonsaleCallResult 開始] 客戶: ${previousCallRecord?.memberName} (${previousCallRecord?.customerId}), 分機: ${previousCallRecord?.dn}`);
-
+    
     try {
       // 這裡可以根據當前的 caller 狀態來判斷前一通電話的通話結果
       if (!previousCallRecord) {
