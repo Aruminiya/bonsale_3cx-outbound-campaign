@@ -127,7 +127,6 @@ export default class Project {
   private previousCallRecord: Array<CallRecord> | null = null; // 保存前一筆撥打記錄
   private wsManager: WebSocketManager | null = null;
   private tokenManager: TokenManager;
-  private throttledMessageHandler: DebouncedFunc<(broadcastWs: WebSocketServer, data: Buffer) => Promise<void>> | null = null;
   // 為 outboundCall 方法添加 throttled
   private throttledOutboundCall: DebouncedFunc<(broadcastWs: WebSocketServer | undefined, eventEntity: string | null, isExecuteOutboundCalls?: boolean, isInitCall?: boolean, participantSnapshot?: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null) => Promise<void>> | null = null;
   private idleCheckTimer: NodeJS.Timeout | null = null; // 空閒檢查定時器
@@ -193,12 +192,6 @@ export default class Project {
 
     // 初始化 TokenManager
     this.tokenManager = new TokenManager(client_id, client_secret, projectId, access_token);
-
-    // 初始化 throttled WebSocket 訊息處理器 (100ms 內最多執行一次)
-    this.throttledMessageHandler = throttle(this.processWebSocketMessage.bind(this), 0, {
-      leading: false,  // 第一次不立即執行
-      trailing: true // 在等待期結束後執行
-    });
 
     // 初始化 throttle outboundCall 方法 (500ms 內最多執行一次)
     this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 500, {
@@ -565,20 +558,6 @@ export default class Project {
         reject(error);
       }
     });
-  }
-
-  /**
-   * 處理 WebSocket 訊息 (throttled 版本)
-   * @param data 收到的訊息資料 (Buffer 格式)
-   * @private
-   */
-  private async handleWebSocketMessage(broadcastWs: WebSocketServer, data: Buffer): Promise<void> {
-    if (this.throttledMessageHandler) {
-      const result = this.throttledMessageHandler(broadcastWs, data);
-      if (result) {
-        await result;
-      }
-    }
   }
 
   /**
@@ -1896,7 +1875,7 @@ export default class Project {
             timestamp: new Date().toISOString()
           });
           if (broadcastWs) {
-            this.handleWebSocketMessage(broadcastWs, data);
+            this.processWebSocketMessage(broadcastWs, data);
           }
         },
         onError: async (error: Error) => {
