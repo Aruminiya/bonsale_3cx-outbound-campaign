@@ -182,6 +182,32 @@ export async function getCaller(
   }
 }
 
+// 獲取單一撥打者資訊
+export async function getCallerDn(
+  token: string, 
+  dn: string,
+) {
+  try {
+    const response = await axios.get(`${host}/callcontrol/${dn}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    return { success: true, data: response.data };
+  } catch (error: unknown) {
+    const axiosError = error as AxiosError;
+    console.error('Error getCallerDn request:', axiosError.message);
+    return {
+      success: false,
+      error: {
+        errorCode: axiosError.response?.status?.toString() || '500',
+        error: `Error getCallerDn request: ${axiosError.message}`,
+      },
+    };
+  }
+}
+
 // 獲取參與者資訊
 export async function getParticipants(token: string, dn: string) {
   try {
@@ -206,9 +232,9 @@ export async function getParticipants(token: string, dn: string) {
 }
 
 // 獲取單一參與者資訊
-export async function getParticipant(token: string, fullEndpoint:string, dn?: string, id?: string) {
+export async function getParticipant(token: string, dn: string, id: string) {
   try {
-    const response = await axios.get(fullEndpoint ? host + fullEndpoint : `${host}/callcontrol/${dn}/participants/${id}`, {
+    const response = await axios.get(`${host}/callcontrol/${dn}/participants/${id}`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -217,12 +243,12 @@ export async function getParticipant(token: string, fullEndpoint:string, dn?: st
     return { success: true, data: response.data as Participant }; // 返回成功
   } catch (error: unknown) {
     const axiosError = error as AxiosError;
-    console.error('Error getParticipants request:', axiosError.message);
+    console.error('Error getParticipant request:', axiosError.message);
     return {
       success: false,
       error: {
         errorCode: axiosError.response?.status?.toString() || '500',
-        error: `Error getParticipants request: ${axiosError.message}`,
+        error: `Error getParticipant request: ${axiosError.message}`,
       },
     }; // 返回錯誤
   }

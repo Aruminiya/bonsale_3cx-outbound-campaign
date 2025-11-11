@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import { throttle, type DebouncedFunc } from 'lodash';
 import { Mutex } from 'async-mutex';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from '../util/timestamp';
-import { getCaller, makeCall, get3cxToken, getParticipant } from '../services/api/callControl'
+import { getCaller, getCallerDn, makeCall, get3cxToken, getParticipants } from '../services/api/callControl'
 import { ProjectManager } from '../class/projectManager';
 import { broadcastAllProjects } from '../components/broadcast';
 import { WebSocketManager } from './webSocketManager';
@@ -590,17 +590,18 @@ export default class Project {
           let participantSnapshot0 = null;
           try {
             if (eventEntity && this.access_token) {
-              const participantResult = await getParticipant(this.access_token, eventEntity);
-              if (participantResult.success) {
-                participantSnapshot0 = participantResult;
-                logWithTimestamp(`✅ 捕獲 participant 快照 - entity: ${eventEntity}`);
-              } else {
-                logWithTimestamp(`⚠️ 無法獲取 participant 快照 - 對方可能已掛斷: ${eventEntity}`);
-                participantSnapshot0 = participantResult; // 關鍵：即使失敗也保存 因為對方已掛斷
-              }
+              // 解析 eventEntity 來獲取分機資訊
+              const eventEntity_dn = eventEntity.split('/')[2]; // 格式固定為 /callcontrol/{dnnumber}/participants/{id}
+              const participantResult = await getParticipants(this.access_token, eventEntity_dn);
+              if (!participantResult.success) {
+                errorWithTimestamp(`❌ 無法獲取 participant 快照`);
+                return;
+              };
+              participantSnapshot0 = participantResult;
+              logWithTimestamp(`✅ 捕獲 participant 快照 - entity: ${eventEntity}`);
             }
           } catch (captureError) {
-            logWithTimestamp(`⚠️ 捕獲 participant 快照失敗:`, captureError);
+            errorWithTimestamp(`❌ 捕獲 participant 快照失敗:`, captureError);
           }
 
           if (this.throttledOutboundCall) {
@@ -621,17 +622,18 @@ export default class Project {
           let participantSnapshot1 = null;
           try {
             if (eventEntity && this.access_token) {
-              const participantResult = await getParticipant(this.access_token, eventEntity);
-              if (participantResult.success) {
-                participantSnapshot1 = participantResult;
-                logWithTimestamp(`✅ 捕獲 participant 快照 - entity: ${eventEntity}`);
-              } else {
-                logWithTimestamp(`⚠️ 無法獲取 participant 快照 - 對方可能已掛斷: ${eventEntity}`);
-                participantSnapshot1 = participantResult; // 關鍵：即使失敗也保存 因為對方已掛斷
-              }
+              // 解析 eventEntity 來獲取分機資訊
+              const eventEntity_dn = eventEntity.split('/')[2]; // 格式固定為 /callcontrol/{dnnumber}/participants/{id}
+              const participantResult = await getParticipants(this.access_token, eventEntity_dn);
+              if (!participantResult.success) {
+                errorWithTimestamp(`❌ 無法獲取 participant 快照`);
+                return;
+              };
+              participantSnapshot1 = participantResult;
+              logWithTimestamp(`✅ 捕獲 participant 快照 - entity: ${eventEntity}`);
             }
           } catch (captureError) {
-            logWithTimestamp(`⚠️ 捕獲 participant 快照失敗:`, captureError);
+            errorWithTimestamp(`❌ 捕獲 participant 快照失敗:`, captureError);
           }
 
           // 如果專案狀態是 stop，檢查是否還有活躍通話
@@ -1042,34 +1044,31 @@ export default class Project {
         // 兩者都需要傳入供後續邏輯判斷 (根據 success 標誌)
         participant = participantSnapshot;
       } else {
-        // 如果沒有快照，再進行查詢（通常是初始撨號的情況）
+        // 如果沒有快照，再進行查詢（通常是初始撥號的情況）
         logWithTimestamp(`⚠️ 沒有快照，重新查詢 participant 狀態`);
-        participant = await getParticipant(this.access_token, eventEntity);
+        // 解析 eventEntity 來獲取分機資訊
+        const eventEntity_dn = eventEntity.split('/')[2]; // 格式固定為 /callcontrol/{dnnumber}/participants/{id}
+        participant = await getParticipants(this.access_token, eventEntity_dn);
       }
 
       if (!participant.success) {
+        errorWithTimestamp(`無法獲取事件實體 ${eventEntity} 的參與者資訊: ${participant.error?.error}`);
+        this.setError(`無法獲取事件實體 ${eventEntity} 的參與者資訊: ${participant.error?.error}`);
+        return;
+      }
+
+      if (participant.data.length === 0) {
+        // 代理人用戶空閒了，執行外撥邏輯
         logWithTimestamp(`無法獲取事件實體 ${eventEntity} 這邊可能是對方掛斷了`);
         // 這邊可能是對方掛斷了
         // 解析 eventEntity 來獲取分機資訊
         const eventEntity_dn = eventEntity.split('/')[2]; // 格式固定為 /callcontrol/{dnnumber}/participants/{id}
 
-        // 檢查代理人用戶是否空閒了
-        const callControls = await getCaller(this.access_token);
-        if (!callControls.success) {
-          errorWithTimestamp(`無法獲取事件實體 ${eventEntity} 的呼叫控制資訊，跳過外撥`);
-          this.setError(`無法獲取事件實體 ${eventEntity} 的呼叫控制資訊，跳過外撥`);
-          return;
-        }
-        const callControl = callControls.data.find((caller: Caller) => caller.dn === eventEntity_dn);
-        if (!callControl) {
-          errorWithTimestamp(`無法在呼叫控制清單中找到分機 ${eventEntity_dn}，跳過外撥`);
-          this.setError(`無法在呼叫控制清單中找到分機 ${eventEntity_dn}，跳過外撥`);
-          return;
-        }
-        const participants = callControl.participants;
-        if (participants && participants.length > 0) {
-          warnWithTimestamp(`分機 ${eventEntity_dn} 仍有參與者，代理人用戶可能仍忙碌，跳過外撥`);
-          this.setWarning(`分機 ${eventEntity_dn} 仍有參與者，代理人用戶可能仍忙碌，跳過外撥`);
+        // 先取得 callerDn 資訊
+        const callerDn = await getCallerDn(this.access_token, eventEntity_dn);
+        if (!callerDn.success) {
+          errorWithTimestamp(`無法獲取分機 ${eventEntity_dn} 的資訊，跳過外撥`);
+          this.setError(`無法獲取分機 ${eventEntity_dn} 的資訊，跳過外撥`);
           return;
         }
         
@@ -1092,7 +1091,7 @@ export default class Project {
 
         // 代理人可用，執行外撥邏輯
         logWithTimestamp(`分機 ${eventEntity_dn} 的代理人用戶可用，繼續外撥流程`);
-        const currentDeviceId = callControl.devices[0]?.device_id;
+        const currentDeviceId = callerDn.data.devices[0]?.device_id;
         await this.processCallerOutbound(eventEntity_dn, currentDeviceId);
       } else {
         logWithTimestamp(`成功獲取事件實體 ${eventEntity} 的參與者資訊:`, participant.data);
@@ -2061,6 +2060,7 @@ export default class Project {
    * @private
    */
   private async handleStopStateLogic(broadcastWs: WebSocketServer): Promise<void> {
+    // TODO handleStopStateLogic 需要旗標避免重複執行
     try {
       // 更新 caller 資訊以獲取最新狀態
       await this.updateCallerInfo();
