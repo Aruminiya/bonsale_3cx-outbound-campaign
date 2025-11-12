@@ -362,7 +362,7 @@ Before deploying to production:
 
 ## Version Management
 
-Current version: v1.0.0 (see package.json and README.md)
+Current version: v1.0.1 (see package.json and README.md)
 
 Recent improvements:
 - Fixed cross-day call restriction validation (callRestriction logic)
