@@ -124,7 +124,7 @@ export default class Project {
   recurrence: string | null = null; // 新增 recurrence 屬性
   callRestriction: Map<string, CallRestriction> = new Map(); // 新增 callRestriction 屬性 (Key: id)
   callerExtensionLastExecutionTime: CallerExtensionLastExecutionTime = {}; // 分機最新執行時間記錄
-  private previousCallRecord: Array<CallRecord> | null = null; // 保存前一筆撥打記錄
+  private previousCallRecord: Map<string, CallRecord> = new Map(); // 保存前一筆撥打記錄 (Key: dn/分機號碼)
   private wsManager: WebSocketManager | null = null;
   private tokenManager: TokenManager;
   // 為 outboundCall 方法添加 throttled
@@ -1162,40 +1162,32 @@ export default class Project {
           if (!this.latestCallRecord) {
             this.latestCallRecord = new Map();
           }
-          if (!this.previousCallRecord) {
-            this.previousCallRecord = [];
-          }
+          // previousCallRecord 已在類屬性中初始化為 new Map()
 
           // 檢查該分機是否已有撥打記錄
           const existingCall = this.latestCallRecord.get(dn);
           if (existingCall) {
             // 如果該分機已有撥打記錄，移動到 previousCallRecord
             if (existingCall) {
-              // 檢查 previousCallRecord 中是否已有該分機的舊記錄
-              const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
+              // 改為 Map，直接用 get(dn) 獲取舊記錄
+              const oldRecord = this.previousCallRecord.get(dn);
 
               // 如果已經有舊記錄，需要先處理它，避免被覆蓋而遺失
-              if (prevCallIndex >= 0) {
-                const oldRecord = this.previousCallRecord[prevCallIndex];
-                if (oldRecord) {
-                  logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
+              if (oldRecord) {
+                logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
 
-                  try {
-                    // 立即處理舊記錄
-                    await this.recordBonsaleCallResult(oldRecord);
-                    logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
-                  } catch (error) {
-                    errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
-                    // 即使處理失敗，也繼續執行，避免阻塞流程
-                  }
+                try {
+                  // 立即處理舊記錄
+                  await this.recordBonsaleCallResult(oldRecord);
+                  logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
+                } catch (error) {
+                  errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
+                  // 即使處理失敗，也繼續執行，避免阻塞流程
                 }
-
-                // 然後用新記錄覆蓋
-                this.previousCallRecord[prevCallIndex] = { ...existingCall };
-              } else {
-                // 沒有舊記錄，直接添加新記錄
-                this.previousCallRecord.push({ ...existingCall });
               }
+
+              // 使用 Map.set() 替代陣列操作，直接按分機號覆蓋
+              this.previousCallRecord.set(dn, { ...existingCall });
 
               logWithTimestamp(`保存分機 ${dn} 的前一筆撥打記錄 - 客戶: ${existingCall.memberName} (${existingCall.customerId})`);
             }
@@ -1231,38 +1223,30 @@ export default class Project {
           if (!this.latestCallRecord) {
             this.latestCallRecord = new Map();
           }
-          if (!this.previousCallRecord) {
-            this.previousCallRecord = [];
-          }
+          // previousCallRecord 已在類屬性中初始化為 new Map()
 
           // 檢查該分機是否有當前撥打記錄需要移動到 previousCallRecord
           const existingCall = this.latestCallRecord.get(dn);
           if (existingCall) {
-            // 檢查 previousCallRecord 中是否已有該分機的舊記錄
-            const prevCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
+            // 改為 Map，直接用 get(dn) 獲取舊記錄
+            const oldRecord = this.previousCallRecord.get(dn);
 
             // 如果已經有舊記錄，需要先處理它，避免被覆蓋而遺失
-            if (prevCallIndex >= 0) {
-              const oldRecord = this.previousCallRecord[prevCallIndex];
-              if (oldRecord) {
-                logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
+            if (oldRecord) {
+              logWithTimestamp(`⚠️ 偵測到分機 ${dn} 有未處理的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId}), 立即處理以避免遺失`);
 
-                try {
-                  // 立即處理舊記錄
-                  await this.recordBonsaleCallResult(oldRecord);
-                  logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
-                } catch (error) {
-                  errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
-                  // 即使處理失敗，也繼續執行，避免阻塞流程
-                }
+              try {
+                // 立即處理舊記錄
+                await this.recordBonsaleCallResult(oldRecord);
+                logWithTimestamp(`✅ 已處理分機 ${dn} 的舊記錄 - 客戶: ${oldRecord.memberName} (${oldRecord.customerId})`);
+              } catch (error) {
+                errorWithTimestamp(`❌ 處理分機 ${dn} 的舊記錄時發生錯誤:`, error);
+                // 即使處理失敗，也繼續執行，避免阻塞流程
               }
-
-              // 然後用新記錄覆蓋
-              this.previousCallRecord[prevCallIndex] = { ...existingCall };
-            } else {
-              // 沒有舊記錄，直接添加新記錄
-              this.previousCallRecord.push({ ...existingCall });
             }
+
+            // 使用 Map.set() 替代陣列操作，直接按分機號覆蓋
+            this.previousCallRecord.set(dn, { ...existingCall });
 
             // 從 latestCallRecord 中移除
             this.latestCallRecord.delete(dn);
@@ -1307,23 +1291,20 @@ export default class Project {
       logWithTimestamp(`[🟡 makeOutboundCall] 等待 ${delayMs}ms 後撥打電話: ${dn} -> ${targetNumber}`);
       await this.delay(delayMs);
 
-      if (this.previousCallRecord && this.previousCallRecord.length > 0) {
-        // 找到該分機的前一筆撥打記錄
-        const previousCallIndex = this.previousCallRecord.findIndex(call => call?.dn === dn);
-        if (previousCallIndex >= 0) {
-          const previousCallForThisExtension = this.previousCallRecord[previousCallIndex];
-          if (previousCallForThisExtension) {
-            // 有該分機的前一筆撥打記錄，執行寫紀錄到 Bonsale 裡面
-            logWithTimestamp(`[🟡 makeOutboundCall] 準備記錄前一通電話結果 - 客戶: ${previousCallForThisExtension.memberName} (${previousCallForThisExtension.customerId})`);
-            const recordStartTime = Date.now();
-            await this.recordBonsaleCallResult(previousCallForThisExtension);
-            const recordEndTime = Date.now();
-            logWithTimestamp(`[🟡 makeOutboundCall] 記錄前一通電話結果完成，耗時: ${recordEndTime - recordStartTime}ms`);
-            
-            // 處理完成後，從 previousCallRecord 中移除該記錄，避免重複處理
-            this.previousCallRecord.splice(previousCallIndex, 1);
-            logWithTimestamp(`已移除分機 ${dn} 的已處理記錄，剩餘 previousCallRecord: ${this.previousCallRecord.length} 筆`);
-          }
+      // 改為 Map，檢查是否有該分機的前一筆撥打記錄
+      if (this.previousCallRecord && this.previousCallRecord.size > 0) {
+        const previousCallForThisExtension = this.previousCallRecord.get(dn);
+        if (previousCallForThisExtension) {
+          // 有該分機的前一筆撥打記錄，執行寫紀錄到 Bonsale 裡面
+          logWithTimestamp(`[🟡 makeOutboundCall] 準備記錄前一通電話結果 - 客戶: ${previousCallForThisExtension.memberName} (${previousCallForThisExtension.customerId})`);
+          const recordStartTime = Date.now();
+          await this.recordBonsaleCallResult(previousCallForThisExtension);
+          const recordEndTime = Date.now();
+          logWithTimestamp(`[🟡 makeOutboundCall] 記錄前一通電話結果完成，耗時: ${recordEndTime - recordStartTime}ms`);
+
+          // 處理完成後，從 previousCallRecord 中移除該記錄，避免重複處理
+          this.previousCallRecord.delete(dn);
+          logWithTimestamp(`已移除分機 ${dn} 的已處理記錄，剩餘 previousCallRecord: ${this.previousCallRecord.size} 筆`);
         }
       }
       if (!targetNumber) {
@@ -2126,18 +2107,9 @@ export default class Project {
         // 將所有 latestCallRecord 移動到 previousCallRecord 以便處理
         for (const callRecord of this.latestCallRecord.values()) {
           if (callRecord) {
-            // 初始化 previousCallRecord（如果需要）
-            if (!this.previousCallRecord) {
-              this.previousCallRecord = [];
-            }
-
-            // 檢查是否已存在該分機的記錄
-            const existingIndex = this.previousCallRecord.findIndex(call => call?.dn === callRecord.dn);
-            if (existingIndex >= 0) {
-              this.previousCallRecord[existingIndex] = { ...callRecord };
-            } else {
-              this.previousCallRecord.push({ ...callRecord });
-            }
+            // previousCallRecord 已在類屬性中初始化為 new Map()
+            // 改為 Map，直接用 set() 覆蓋或新增記錄
+            this.previousCallRecord.set(callRecord.dn, { ...callRecord });
 
             logWithTimestamp(`📋 移動通話記錄到待處理清單 - 分機: ${callRecord.dn}, 客戶: ${callRecord.memberName} (${callRecord.customerId})`);
           }
@@ -2151,11 +2123,11 @@ export default class Project {
       }
 
       // 處理所有 previousCallRecord
-      if (this.previousCallRecord && this.previousCallRecord.length > 0) {
-        logWithTimestamp(`🔄 開始處理 ${this.previousCallRecord.length} 筆待處理的通話記錄`);
-        
-        const processPromises = this.previousCallRecord
-          .filter(record => record !== null)
+      if (this.previousCallRecord && this.previousCallRecord.size > 0) {
+        logWithTimestamp(`🔄 開始處理 ${this.previousCallRecord.size} 筆待處理的通話記錄`);
+
+        // 改為 Map，直接遍歷 values()
+        const processPromises = Array.from(this.previousCallRecord.values())
           .map(async (record) => {
             try {
               await this.recordBonsaleCallResult(record);
@@ -2164,12 +2136,12 @@ export default class Project {
               errorWithTimestamp(`❌ 處理通話記錄失敗 - 分機: ${record!.dn}, 客戶: ${record!.memberName}:`, error);
             }
           });
-        
+
         // 等待所有記錄處理完成
         await Promise.allSettled(processPromises);
-        
-        // 清空 previousCallRecord
-        this.previousCallRecord = [];
+
+        // 使用 Map.clear() 清空 previousCallRecord
+        this.previousCallRecord.clear();
         
         logWithTimestamp(`✅ 所有未完成的通話記錄處理完成`);
       } else {
