@@ -2069,6 +2069,9 @@ export default class Project {
       // 更新 caller 資訊以獲取最新狀態
       await this.updateCallerInfo();
 
+      // 更新最新通話記錄狀態
+      await this.updateLatestCallRecordStatus();
+
       // 廣播專案資訊（讓前端知道當前通話狀態）
       await this.broadcastProjectInfo(broadcastWs);
 
