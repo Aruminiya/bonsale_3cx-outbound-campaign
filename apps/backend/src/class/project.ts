@@ -129,6 +129,8 @@ export default class Project {
   private tokenManager: TokenManager;
   // 為 outboundCall 方法添加 throttled
   private throttledOutboundCall: DebouncedFunc<(broadcastWs: WebSocketServer | undefined, eventEntity: string | null, isExecuteOutboundCalls?: boolean, isInitCall?: boolean, participantSnapshot?: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null) => Promise<void>> | null = null;
+  // 為 handleStopStateLogic 方法添加 throttled - 防止 case 0 多次觸發
+  private throttledHandleStopStateLogic: DebouncedFunc<(broadcastWs: WebSocketServer) => Promise<void>> | null = null;
   private idleCheckTimer: NodeJS.Timeout | null = null; // 空閒檢查定時器
   private idleCheckInterval: number = IDLE_CHECK_INTERVAL || 30000; // 當前檢查間隔 預設 30000 毫秒 (30 秒)
   private readonly minIdleCheckInterval: number = MIN_IDLE_CHECK_INTERVAL || 30000; // 最小檢查間隔 預設 30000 毫秒 (30 秒)
@@ -195,6 +197,12 @@ export default class Project {
 
     // 初始化 throttle outboundCall 方法 (500ms 內最多執行一次)
     this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 500, {
+      leading: false,   // 第一次不立即執行
+      trailing: true  // 在等待期結束後執行
+    });
+
+    // 初始化 throttle handleStopStateLogic 方法 (500ms 內最多執行一次) - 防止 case 0 多次觸發
+    this.throttledHandleStopStateLogic = throttle(this.handleStopStateLogic.bind(this), 500, {
       leading: false,   // 第一次不立即執行
       trailing: true  // 在等待期結束後執行
     });
@@ -604,6 +612,18 @@ export default class Project {
             errorWithTimestamp(`❌ 捕獲 participant 快照失敗:`, captureError);
           }
 
+          // 如果專案狀態是 stop，使用 throttle 版本檢查是否還有活躍通話
+          if (this.state === 'stop') {
+            logWithTimestamp(`專案狀態為 stop，調用 throttle 版本的停止狀態邏輯`);
+            // 使用 throttle 版本，防止 case 0 多次觸發
+            if (this.throttledHandleStopStateLogic) {
+              this.throttledHandleStopStateLogic(broadcastWs)!.catch(error => {
+                errorWithTimestamp('case 0 觸發停止狀態邏輯時發生錯誤:', error);
+              });
+            }
+            return;
+          }
+
           if (this.throttledOutboundCall) {
             // 使用 throttled 版本的 outboundCall，並傳入快照
             // 注意：不 await，讓它在背景執行，避免在 WebSocket 事件處理器內造成死鎖
@@ -818,6 +838,7 @@ export default class Project {
     try {
       // 獲取新的 caller 資訊
       const caller = await getCaller(this.access_token!);
+
       if (!caller.success) {
         throw new Error(`獲取呼叫者資訊失敗: ${caller.error}`);
       }
@@ -2056,18 +2077,20 @@ export default class Project {
 
   /**
    * 處理停止狀態下的邏輯
+   * 使用 isHandlingStop 旗標防止重複執行
    * @param broadcastWs 廣播 WebSocket 伺服器實例
    * @private
    */
   private async handleStopStateLogic(broadcastWs: WebSocketServer): Promise<void> {
-    // TODO handleStopStateLogic 需要旗標避免重複執行
     try {
+      logWithTimestamp(`🛑 專案 ${this.projectId} 開始處理停止狀態邏輯`);
+
       // 更新 caller 資訊以獲取最新狀態
       await this.updateCallerInfo();
-      
+
       // 廣播專案資訊（讓前端知道當前通話狀態）
       await this.broadcastProjectInfo(broadcastWs);
-      
+
       // 檢查是否還有活躍通話
       if (!this.hasActiveCalls()) {
         logWithTimestamp(`專案 ${this.projectId} 已無活躍通話，執行完全停止`);
@@ -2082,6 +2105,8 @@ export default class Project {
       }
     } catch (error) {
       errorWithTimestamp(`處理停止狀態邏輯時發生錯誤:`, error);
+    } finally {
+      logWithTimestamp(`✅ 專案 ${this.projectId} 完成停止狀態邏輯處理`);
     }
   }
 
