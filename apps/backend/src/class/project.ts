@@ -139,7 +139,10 @@ export default class Project {
   private broadcastWsRef: WebSocketServer | undefined = undefined; // 保存 WebSocket 引用
 
   // 全域 Mutex - 保護 latestCallRecord 和 previousCallRecord 的原子性
-  private readonly processCallerMutex: Mutex = new Mutex(); // 全域互斥鎖，確保只有一個分機能同時執行 processCallerOutbound
+  // private readonly processCallerMutex: Mutex = new Mutex(); // 全域互斥鎖，確保只有一個分機能同時執行 processCallerOutbound
+
+// 🆕 分機級 Mutex 映射 - 允許不同分機並行執行
+  private readonly processMutexPerExtension: Map<string, Mutex> = new Map();
 
   // 🆕 Token 刷新 Flag - 防止重複刷新 WebSocket 連接
   private isRefreshingToken: boolean = false;
@@ -311,6 +314,14 @@ export default class Project {
         recurrence,
         callRestriction
       );
+
+      // 為所有分機初始化 Mutex
+      if (callerData && callerData.length > 0) {
+        for (const c of callerData) {
+          project.processMutexPerExtension.set(c.dn, new Mutex());
+          logWithTimestamp(`🔒 為分機 ${c.dn} 初始化 Mutex`);
+        }
+      }
 
       // 儲存專案到 Redis
       await ProjectManager.saveProject(project);
@@ -719,7 +730,19 @@ export default class Project {
     const outboundCallStartTime = Date.now();
     logWithTimestamp(`[🔴 outboundCall 嘗試獲取 Mutex] eventEntity: ${eventEntity}`);
 
-    await this.processCallerMutex.runExclusive(async () => {
+    if (!eventEntity) {
+      logWithTimestamp('eventEntity 為空，無法進行 outboundCall');
+      return;
+    }
+
+    const eventEntity_dn = eventEntity.split('/')[2];
+    const extensionMutex = this.processMutexPerExtension.get(eventEntity_dn);
+    if (!extensionMutex) {
+      logWithTimestamp(`未找到分機 ${eventEntity_dn} 的 Mutex，無法進行 outboundCall`);
+      return;
+    }
+    
+    await extensionMutex.runExclusive(async () => {
       const mutexAcquiredTime = Date.now();
       logWithTimestamp(`[🔴 outboundCall 已獲取 Mutex] 等待時間: ${mutexAcquiredTime - outboundCallStartTime}ms`);
 
@@ -786,9 +809,11 @@ export default class Project {
         }
         
         // 步驟三: 獲取並更新 caller 資訊
+        // TODO 分機鎖現在可能有問題 因為 caller 是整體的 不應該分機鎖 應該要在 WS 收到訊息製作快照後 更新 單一 caller
         await this.updateCallerInfo();
 
         // 步驟四: 更新當前撥打記錄的狀態
+        // TODO 分機鎖現在可能有問題 因為 latestCallRecord 是整體的 不應該分機鎖 應該要在 WS 收到訊息製作快照後 更新 單一 latestCallRecord
         await this.updateLatestCallRecordStatus();
 
         // 步驟五: 廣播專案資訊
