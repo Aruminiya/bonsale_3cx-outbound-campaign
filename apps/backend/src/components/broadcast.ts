@@ -29,9 +29,9 @@ export async function broadcastAllProjects(
           client_id: p.client_id,
           agentQuantity: p.agentQuantity,
           caller: p.caller,
-          // 將 Map 轉換為對象數組格式
+          // 將 Map 轉換為對象格式，保留分機號作為 key
           latestCallRecord: p.latestCallRecord instanceof Map
-            ? Array.from(p.latestCallRecord.values()) // 只取值，因為 Map 的 key 已經在 dn 欄位中
+            ? Object.fromEntries(p.latestCallRecord) // 🆕 保留 Map 的 key（分機號），轉為對象 { dn: record, ... }
             : (p.latestCallRecord || null),
           access_token: p.access_token ? '***' : null, // 隱藏敏感資訊
           recurrence: p.recurrence || null,

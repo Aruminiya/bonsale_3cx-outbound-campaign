@@ -157,6 +157,9 @@ export default class Project {
   // 全域 Mutex - 保護 latestCallRecord 和 previousCallRecord 的原子性
   private readonly processCallerMutex: Mutex = new Mutex(); // 全域互斥鎖，確保只有一個分機能同時執行 processCallerOutbound
 
+// 🆕 分機級 Mutex 映射 - 允許不同分機並行執行
+  private readonly processMutexPerExtension: Map<string, Mutex> = new Map();
+
   // 🆕 Token 刷新 Flag - 防止重複刷新 WebSocket 連接
   private isRefreshingToken: boolean = false;
 
@@ -660,8 +663,8 @@ export default class Project {
           // 🆕 根據專案狀態分別處理
           // 如果專案狀態是 stop，執行停止邏輯（而不是加入佇列）
           if (this.state === 'stop') {
-            logWithTimestamp(`專案狀態為 stop，執行停止狀態邏輯`);
-            await this.handleStopStateLogic(broadcastWs);
+            logWithTimestamp(`專案狀態為 stop，執行停止狀態邏輯處理`);
+            await this.handleStopStateLogic(broadcastWs, participantSnapshot1, eventEntity);
             return;
           }
 
@@ -872,7 +875,31 @@ export default class Project {
     const outboundCallStartTime = Date.now();
     logWithTimestamp(`[🔴 outboundCall 嘗試獲取 Mutex] eventEntity: ${eventEntity}`);
 
-    await this.processCallerMutex.runExclusive(async () => {
+    let eventEntity_dn = null;
+    let extensionMutex: Mutex | null = null;
+
+    if (isInitCall) {
+      logWithTimestamp('初始化撥號流程，使用全域 Mutex 進行保護');
+      // 使用全域 Mutex 保護（初始化撥號）
+      extensionMutex = this.processCallerMutex;
+    } else {
+      if (!eventEntity) {
+        errorWithTimestamp('❌ eventEntity 為空，無法進行 outboundCall');
+        this.setError('eventEntity 為空，無法進行 outboundCall');
+        return;
+      }
+
+      eventEntity_dn = eventEntity.split('/')[2];
+      extensionMutex = this.processMutexPerExtension.get(eventEntity_dn) || null;
+      if (!extensionMutex) {
+        errorWithTimestamp(`未找到分機 ${eventEntity_dn} 的 Mutex，無法進行 outboundCall`);
+        this.setError(`未找到分機 ${eventEntity_dn} 的 Mutex，無法進行 outboundCall`);
+        return;
+      }
+    }
+
+    
+    await extensionMutex.runExclusive(async () => {
       const mutexAcquiredTime = Date.now();
       logWithTimestamp(`[🔴 outboundCall 已獲取 Mutex] 等待時間: ${mutexAcquiredTime - outboundCallStartTime}ms`);
 
@@ -955,11 +982,69 @@ export default class Project {
           // 注意：分機狀態管理器現在使用管理員 token 自動管理，不需要同步更新
         }
         
-        // 步驟三: 獲取並更新 caller 資訊
-        await this.updateCallerInfo();
+        // 步驟三: 更新 caller 資訊
+        // 初始化播號：調用全局函數，更新所有分機的 caller 資訊（全域 Mutex 保護）
+        // 後續播號：只更新該分機的部分，避免全局競爭（分機級 Mutex 保護）
+        if (isInitCall) {
+          // 全局更新 caller 資訊 因為有全域鎖保護 所以安全
+          await this.updateCallerInfo();
+        } else {
+          if (participantSnapshot && participantSnapshot.success && this.caller && participantSnapshot.data) {
+            const participant = participantSnapshot.data;
+            const callerIndex = this.caller.findIndex(c => c.dn === eventEntity_dn);
+            if (callerIndex >= 0) {
+              // 如果 participant 已經是陣列，直接賦值；否則包裝成陣列
+              this.caller[callerIndex].participants = Array.isArray(participant)
+                ? participant
+                : [participant] as Participants[];
+              logWithTimestamp(`[分機 ${eventEntity_dn}] 已更新 caller 資訊`);
 
-        // 步驟四: 更新當前撥打記錄的狀態
-        await this.updateLatestCallRecordStatus();
+              // 同步該分機的更新到 Redis
+              await ProjectManager.updateProjectCaller(this.projectId, this.caller);
+            } else {
+              logWithTimestamp(`[分機 ${eventEntity_dn}] 無法更新 caller 資訊：未找到對應分機`);
+            }
+          }
+        }
+
+
+        // 步驟四: 更新 latestCallRecord 狀態
+        // 初始化播號：調用全局函數，更新所有分機的狀態（全域 Mutex 保護）
+        // 後續播號：只更新該分機的記錄，避免全局競爭（分機級 Mutex 保護）
+        if (isInitCall) {
+          // 全局更新 latestCallRecord 狀態 因為有全域鎖保護 所以安全
+          await this.updateLatestCallRecordStatus();
+        } else {
+          if (!eventEntity_dn || !participantSnapshot) {
+            errorWithTimestamp('❌ 無法更新 latestCallRecord 狀態，缺少 eventEntity_dn 或 participantSnapshot');
+            this.setError('無法更新 latestCallRecord 狀態，缺少 eventEntity_dn 或 participantSnapshot');
+            return;
+          }
+
+          const currentCall = this.latestCallRecord.get(eventEntity_dn);
+          if (currentCall && participantSnapshot?.data) {
+            // 如果 data 是陣列，取第一個元素；否則直接用
+            const participant = Array.isArray(participantSnapshot.data)
+              ? participantSnapshot.data[0]
+              : participantSnapshot.data;
+
+            if (participant?.status) {
+              const newStatus = participant.status as "Dialing" | "Connected";
+              if (currentCall.status !== newStatus) {
+                const oldStatus = currentCall.status;
+                this.latestCallRecord.set(eventEntity_dn, {
+                  ...currentCall,
+                  status: newStatus
+                });
+                logWithTimestamp(`[分機 ${eventEntity_dn}] 撥打狀態已更新: ${oldStatus} -> ${newStatus}`);
+
+                // 同步該分機的更新到 Redis
+                await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
+              }
+            }
+          }
+        }
+
 
         // 步驟五: 廣播專案資訊
         if (broadcastWs) {
@@ -2232,15 +2317,50 @@ export default class Project {
    * @param broadcastWs 廣播 WebSocket 伺服器實例
    * @private
    */
-  private async handleStopStateLogic(broadcastWs: WebSocketServer): Promise<void> {
+  private async handleStopStateLogic(
+    broadcastWs: WebSocketServer,
+    participantSnapshot?: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null,
+    eventEntity?: string | null
+  ): Promise<void> {
     try {
       logWithTimestamp(`🛑 專案 ${this.projectId} 開始處理停止狀態邏輯`);
 
-      // 更新 caller 資訊以獲取最新狀態
-      await this.updateCallerInfo();
+      // 只更新該分機的 caller 資訊（不調用全局函數，避免競爭）
+      if (participantSnapshot && participantSnapshot.success && this.caller && participantSnapshot.data && eventEntity) {
+        const eventEntity_dn = eventEntity.split('/')[2];
+        const participant = participantSnapshot.data;
+        const callerIndex = this.caller.findIndex(c => c.dn === eventEntity_dn);
+        if (callerIndex >= 0) {
+          // 如果 participant 已經是陣列，直接賦值；否則包裝成陣列
+          this.caller[callerIndex].participants = Array.isArray(participant)
+            ? participant
+            : [participant] as Participants[];
+          logWithTimestamp(`[分機 ${eventEntity_dn}] 已更新 caller 資訊 (停止狀態)`);
+        }
 
-      // 更新最新通話記錄狀態
-      await this.updateLatestCallRecordStatus();
+        // 更新到 Redis
+        await ProjectManager.updateProjectCaller(this.projectId, this.caller);
+      }
+
+      // 只更新該分機的 latestCallRecord 狀態（不調用全局函數，避免競爭）
+      if (participantSnapshot && eventEntity) {
+        const eventEntity_dn = eventEntity.split('/')[2];
+        const currentCall = this.latestCallRecord.get(eventEntity_dn);
+        if (currentCall && participantSnapshot?.data?.status) {
+          const newStatus = participantSnapshot.data.status as "Dialing" | "Connected";
+          if (currentCall.status !== newStatus) {
+            const oldStatus = currentCall.status;
+            this.latestCallRecord.set(eventEntity_dn, {
+              ...currentCall,
+              status: newStatus
+            });
+            logWithTimestamp(`[分機 ${eventEntity_dn}] 撥打狀態已更新 (停止狀態): ${oldStatus} -> ${newStatus}`);
+
+            // 同步該分機的更新到 Redis
+            await ProjectManager.updateProjectLatestCallRecord(this.projectId, this.latestCallRecord);
+          }
+        }
+      }
 
       // 廣播專案資訊（讓前端知道當前通話狀態）
       await this.broadcastProjectInfo(broadcastWs);
