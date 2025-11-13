@@ -29,7 +29,10 @@ export async function broadcastAllProjects(
           client_id: p.client_id,
           agentQuantity: p.agentQuantity,
           caller: p.caller,
-          latestCallRecord: p.latestCallRecord || null, // 直接使用，因為 Project 實例中已經是正確的型別
+          // 將 Map 轉換為對象數組格式
+          latestCallRecord: p.latestCallRecord instanceof Map
+            ? Array.from(p.latestCallRecord.values()) // 只取值，因為 Map 的 key 已經在 dn 欄位中
+            : (p.latestCallRecord || null),
           access_token: p.access_token ? '***' : null, // 隱藏敏感資訊
           recurrence: p.recurrence || null,
           callRestriction: p.callRestriction || [],
