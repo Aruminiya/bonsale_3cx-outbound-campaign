@@ -1,6 +1,5 @@
 import { WebSocketServer } from "ws";
 import dotenv from 'dotenv';
-import { throttle, type DebouncedFunc } from 'lodash';
 import { Mutex } from 'async-mutex';
 import { logWithTimestamp, warnWithTimestamp, errorWithTimestamp } from '../util/timestamp';
 import { getCaller, getCallerDn, makeCall, get3cxToken, getParticipants } from '../services/api/callControl'
@@ -107,6 +106,20 @@ type CallerExtensionLastExecutionTime = {
   [extension: string]: string;
 }
 
+/**
+ * 待處理的狀態更新 - 用於合併高頻率的事件
+ * 記錄來自 case 0 和 case 1 的多個事件，累積它們的狀態
+ */
+type PendingStateUpdate = {
+  broadcastWs: WebSocketServer | undefined;
+  eventDn: string;
+  eventEntity: string | null;
+  isExecuteOutboundCalls: boolean;
+  isInitCall: boolean;
+  participantSnapshot: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null;
+  timestamp: number; // 記錄最後更新時間
+}
+
 export default class Project {
   grant_type: string;
   client_id: string;
@@ -127,10 +140,13 @@ export default class Project {
   private previousCallRecord: Map<string, CallRecord> = new Map(); // 保存前一筆撥打記錄 (Key: dn/分機號碼)
   private wsManager: WebSocketManager | null = null;
   private tokenManager: TokenManager;
-  // 為 outboundCall 方法添加 throttled
-  private throttledOutboundCall: DebouncedFunc<(broadcastWs: WebSocketServer | undefined, eventEntity: string | null, isExecuteOutboundCalls?: boolean, isInitCall?: boolean, participantSnapshot?: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null) => Promise<void>> | null = null;
-  // 為 handleStopStateLogic 方法添加 throttled - 防止 case 0 多次觸發
-  private throttledHandleStopStateLogic: DebouncedFunc<(broadcastWs: WebSocketServer) => Promise<void>> | null = null;
+
+  // 🆕 狀態合併機制 - 替代 throttle
+  private pendingStateUpdate: PendingStateUpdate[] = []; // 暫存待處理的狀態更新（陣列）
+  private processingStateUpdate: boolean = false; // 防止重複執行的 flag
+  private stateUpdateTimer: NodeJS.Timeout | null = null; // 狀態更新定時器（100ms 後執行合併）
+  private readonly STATE_UPDATE_DELAY = 100; // 累積事件的延遲時間（毫秒）
+
   private idleCheckTimer: NodeJS.Timeout | null = null; // 空閒檢查定時器
   private idleCheckInterval: number = IDLE_CHECK_INTERVAL || 30000; // 當前檢查間隔 預設 30000 毫秒 (30 秒)
   private readonly minIdleCheckInterval: number = MIN_IDLE_CHECK_INTERVAL || 30000; // 最小檢查間隔 預設 30000 毫秒 (30 秒)
@@ -194,19 +210,6 @@ export default class Project {
 
     // 初始化 TokenManager
     this.tokenManager = new TokenManager(client_id, client_secret, projectId, access_token);
-
-    // 初始化 throttle outboundCall 方法 (500ms 內最多執行一次)
-    this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 500, {
-      leading: false,   // 第一次不立即執行
-      trailing: true  // 在等待期結束後執行
-    });
-
-    // 初始化 throttle handleStopStateLogic 方法 (500ms 內最多執行一次) - 防止 case 0 多次觸發
-    this.throttledHandleStopStateLogic = throttle(this.handleStopStateLogic.bind(this), 500, {
-      leading: false,   // 第一次不立即執行
-      trailing: true  // 在等待期結束後執行
-    });
-
   }
 
   /**
@@ -587,10 +590,12 @@ export default class Project {
       // 根據不同的事件類型處理邏輯
       const eventType = messageObject.event.event_type;
       const eventEntity = messageObject.event.entity;
+      // 解析 eventEntity 來獲取分機資訊
+      const eventEntity_dn = eventEntity.split('/')[2]; // 格式固定為 /callcontrol/{dnnumber}/participants/{id}
 
       switch (eventType) {
         case 0:
-          logWithTimestamp(`狀態 ${eventType}:`, messageObject.event);
+          logWithTimestamp(`🟦 Case 0 觸發（通話事件存在）`, messageObject.event);
           // ✅ 改進：在 WebSocket 事件處理時立即捕獲 participant 快照
           // 這樣可以避免在 Mutex 排隊期間 entity 失效導致的問題
 
@@ -598,8 +603,6 @@ export default class Project {
           let participantSnapshot0 = null;
           try {
             if (eventEntity && this.access_token) {
-              // 解析 eventEntity 來獲取分機資訊
-              const eventEntity_dn = eventEntity.split('/')[2]; // 格式固定為 /callcontrol/{dnnumber}/participants/{id}
               const participantResult = await getParticipants(this.access_token, eventEntity_dn);
               if (!participantResult.success) {
                 errorWithTimestamp(`❌ 無法獲取 participant 快照`);
@@ -612,29 +615,21 @@ export default class Project {
             errorWithTimestamp(`❌ 捕獲 participant 快照失敗:`, captureError);
           }
 
-          // 如果專案狀態是 stop，使用 throttle 版本檢查是否還有活躍通話
+          // 🆕 使用新的佇列機制替代 throttle
+          // 如果專案狀態是 stop，檢查是否還有活躍通話
           if (this.state === 'stop') {
-            logWithTimestamp(`專案狀態為 stop，調用 throttle 版本的停止狀態邏輯`);
-            // 使用 throttle 版本，防止 case 0 多次觸發
-            if (this.throttledHandleStopStateLogic) {
-              this.throttledHandleStopStateLogic(broadcastWs)!.catch(error => {
-                errorWithTimestamp('case 0 觸發停止狀態邏輯時發生錯誤:', error);
-              });
-            }
+            logWithTimestamp(`專案狀態為 stop，使用佇列機制檢查是否還有活躍通話`);
+            // 使用佇列機制，合併多個快速事件
+            this.queueStateUpdate(broadcastWs, eventEntity_dn, eventEntity, false, false, participantSnapshot0);
             return;
           }
 
-          if (this.throttledOutboundCall) {
-            // 使用 throttled 版本的 outboundCall，並傳入快照
-            // 注意：不 await，讓它在背景執行，避免在 WebSocket 事件處理器內造成死鎖
-
-            this.throttledOutboundCall(broadcastWs, eventEntity, false, false, participantSnapshot0)!.catch(error => {
-              errorWithTimestamp('case 0 觸發外撥邏輯時發生錯誤:', error);
-            });
-          }
+          // 使用佇列機制處理 case 0 事件，避免多個分機同時掛斷時重複執行
+          logWithTimestamp(`佇列化 case 0 事件`);
+          this.queueStateUpdate(broadcastWs, eventEntity_dn, eventEntity, false, false, participantSnapshot0);
           break;
         case 1:
-          logWithTimestamp(`狀態 ${eventType}:`, messageObject.event);
+          logWithTimestamp(`🟩 Case 1 觸發（通話事件變化）`, messageObject.event);
           // ✅ 改進：在 WebSocket 事件處理時立即捕獲 participant 快照
           // 這樣可以避免在 Mutex 排隊期間 entity 失效導致的問題
 
@@ -642,8 +637,7 @@ export default class Project {
           let participantSnapshot1 = null;
           try {
             if (eventEntity && this.access_token) {
-              // 解析 eventEntity 來獲取分機資訊
-              const eventEntity_dn = eventEntity.split('/')[2]; // 格式固定為 /callcontrol/{dnnumber}/participants/{id}
+             
               const participantResult = await getParticipants(this.access_token, eventEntity_dn);
               if (!participantResult.success) {
                 errorWithTimestamp(`❌ 無法獲取 participant 快照`);
@@ -656,19 +650,19 @@ export default class Project {
             errorWithTimestamp(`❌ 捕獲 participant 快照失敗:`, captureError);
           }
 
+          // 🆕 使用新的佇列機制替代直接呼叫
           // 如果專案狀態是 stop，檢查是否還有活躍通話
           if (this.state === 'stop') {
-            logWithTimestamp(`專案狀態為 stop，執行停止狀態邏輯處理`);
-            await this.handleStopStateLogic(broadcastWs);
+            logWithTimestamp(`專案狀態為 stop，使用佇列機制檢查是否還有活躍通話`);
+            // 使用佇列機制，合併多個快速事件
+            this.queueStateUpdate(broadcastWs, eventEntity_dn, eventEntity, true, false, participantSnapshot1);
             return;
-          } 
-          
-          // 將捕獲的快照傳入 outboundCall
-          logWithTimestamp(`調用 outboundCall 處理事件 entity: ${eventEntity}，狀態: ${this.state}`);
-          // 注意：不 await，讓它在背景執行，避免在 WebSocket 事件處理器內造成死鎖
-          this.outboundCall(broadcastWs, eventEntity, true, false, participantSnapshot1).catch(error => {
-            errorWithTimestamp('case 1 觸發外撥邏輯時發生錯誤:', error);
-          });
+          }
+
+          // 🆕 使用佇列機制而非直接 await outboundCall
+          // 這樣可以合併多個高頻率的 case 1 事件
+          logWithTimestamp(`佇列化 case 1 事件`);
+          this.queueStateUpdate(broadcastWs, eventEntity_dn, eventEntity, true, false, participantSnapshot1);
 
           break;
         default:
@@ -699,6 +693,146 @@ export default class Project {
       } catch (error) {
         errorWithTimestamp(`❌ 保存分機 ${dn} 執行時間到 Redis 失敗:`, error);
       }
+    }
+  }
+
+  /**
+   * 🆕 佇列式狀態合併 - 用於處理高頻率的 WebSocket 事件
+   * 當多個事件在短時間內發生時（例如多個分機同時掛斷），
+   * 將這些事件的狀態合併，只執行一次 outboundCall
+   *
+   * @param broadcastWs 廣播 WebSocket 伺服器實例
+   * @param eventEntity WebSocket 事件實體
+   * @param isExecuteOutboundCalls 是否執行外撥邏輯
+   * @param isInitCall 是否為初始撥號
+   * @param participantSnapshot 參與者快照
+   * @private
+   */
+  private queueStateUpdate(
+    broadcastWs: WebSocketServer | undefined,
+    eventDn: string,
+    eventEntity: string | null,
+    isExecuteOutboundCalls: boolean,
+    isInitCall: boolean,
+    participantSnapshot: { success: boolean; data?: Participant; error?: { errorCode: string; error: string; } } | null
+  ): void {
+    const now = Date.now();
+
+    // 第一步：查找是否已有相同分機的待處理狀態
+    const existingUpdateIndex = this.pendingStateUpdate.findIndex(
+      update => update.eventDn === eventDn
+    );
+
+    if (existingUpdateIndex !== -1) {
+      // 找到相同分機，更新其內容（合併狀態）
+      const existingUpdate = this.pendingStateUpdate[existingUpdateIndex];
+      existingUpdate.broadcastWs = broadcastWs;
+      existingUpdate.eventEntity = eventEntity || existingUpdate.eventEntity || null;
+      existingUpdate.isExecuteOutboundCalls = isExecuteOutboundCalls || existingUpdate.isExecuteOutboundCalls || false;
+      existingUpdate.isInitCall = isInitCall;
+      existingUpdate.participantSnapshot = participantSnapshot || existingUpdate.participantSnapshot || null;
+      existingUpdate.timestamp = now;
+
+      logWithTimestamp(`✅ 狀態更新已佇列（更新現有分機 ${eventDn}）`, {
+        eventEntity,
+        isExecuteOutboundCalls,
+        queueLength: this.pendingStateUpdate.length,
+        hasWaitingTimer: !!this.stateUpdateTimer
+      });
+    } else {
+      // 沒找到，新增一條記錄
+      this.pendingStateUpdate.push({
+        broadcastWs,
+        eventDn: eventDn,
+        eventEntity: eventEntity,
+        isExecuteOutboundCalls: isExecuteOutboundCalls,
+        isInitCall,
+        participantSnapshot: participantSnapshot,
+        timestamp: now
+      });
+
+      logWithTimestamp(`✅ 狀態更新已佇列（新增分機 ${eventDn}）`, {
+        eventEntity,
+        isExecuteOutboundCalls,
+        queueLength: this.pendingStateUpdate.length,
+        hasWaitingTimer: !!this.stateUpdateTimer
+      });
+    }
+
+    // 第二步：檢查是否已有定時器在等待
+    if (this.stateUpdateTimer) {
+      logWithTimestamp(`⏳ 已有狀態更新定時器在執行中，將使用該定時器處理新的狀態`, {
+        queueLength: this.pendingStateUpdate.length
+      });
+      return; // 不重新設置定時器
+    }
+
+    // 第三步：設置新的定時器，100ms 後執行合併的狀態
+    logWithTimestamp(`⏱️ 設置狀態更新定時器，將在 ${this.STATE_UPDATE_DELAY}ms 後處理`, {
+      queueLength: this.pendingStateUpdate.length
+    });
+
+    this.stateUpdateTimer = setTimeout(() => {
+      this.stateUpdateTimer = null; // 清除定時器引用
+      this._processQueuedStateUpdates().catch(error => {
+        errorWithTimestamp('❌ 處理佇列的狀態更新時發生錯誤:', error);
+      });
+    }, this.STATE_UPDATE_DELAY);
+  }
+
+  /**
+   * 🆕 處理佇列中的所有狀態更新
+   * 這是實際執行 outboundCall 的地方
+   * @private
+   */
+  private async _processQueuedStateUpdates(): Promise<void> {
+    // 防止重複執行
+    if (this.processingStateUpdate) {
+      logWithTimestamp(`⚠️ 狀態更新已在執行中，跳過此次處理`);
+      return;
+    }
+
+    if (this.pendingStateUpdate.length === 0) {
+      logWithTimestamp(`⚠️ 沒有待處理的狀態更新，跳過`);
+      return;
+    }
+
+    this.processingStateUpdate = true;
+    try {
+      const updates = this.pendingStateUpdate;
+      this.pendingStateUpdate = []; // 清除待處理的狀態
+
+      logWithTimestamp(`🟢 開始處理佇列的狀態更新`, {
+        updateCount: updates.length,
+        eventDns: updates.map(u => u.eventDn).join(', ')
+      });
+
+      // 執行所有待處理的 outboundCall
+      for (const update of updates) {
+        logWithTimestamp(`  ├─ 處理分機 ${update.eventDn}`, {
+          eventEntity: update.eventEntity,
+          isExecuteOutboundCalls: update.isExecuteOutboundCalls
+        });
+
+        try {
+          await this.outboundCall(
+            update.broadcastWs,
+            update.eventEntity,
+            update.isExecuteOutboundCalls,
+            update.isInitCall,
+            update.participantSnapshot
+          );
+        } catch (error) {
+          errorWithTimestamp(`❌ 處理分機 ${update.eventDn} 時發生錯誤:`, error);
+          // 繼續處理下一個分機，不因為一個分機失敗而停止
+        }
+      }
+
+      logWithTimestamp(`✅ 完成所有佇列中的狀態更新`);
+    } catch (error) {
+      errorWithTimestamp('❌ 處理佇列狀態更新時發生錯誤:', error);
+    } finally {
+      this.processingStateUpdate = false;
     }
   }
 
@@ -2224,7 +2358,7 @@ export default class Project {
   disconnect3cxWebSocket(): Promise<void> {
     // 停止空閒檢查定時器
     this.stopIdleCheck();
-    
+
     if (this.wsManager) {
       return this.wsManager.disconnect();
     }
