@@ -615,12 +615,11 @@ export default class Project {
             errorWithTimestamp(`❌ 捕獲 participant 快照失敗:`, captureError);
           }
 
-          // 🆕 使用新的佇列機制替代 throttle
-          // 如果專案狀態是 stop，檢查是否還有活躍通話
+          // 🆕 根據專案狀態分別處理
+          // 如果專案狀態是 stop，執行停止邏輯（而不是加入佇列）
           if (this.state === 'stop') {
-            logWithTimestamp(`專案狀態為 stop，使用佇列機制檢查是否還有活躍通話`);
-            // 使用佇列機制，合併多個快速事件
-            this.queueStateUpdate(broadcastWs, eventEntity_dn, eventEntity, false, false, participantSnapshot0);
+            logWithTimestamp(`專案狀態為 stop，執行停止狀態邏輯`);
+            await this.handleStopStateLogic(broadcastWs);
             return;
           }
 
@@ -637,7 +636,6 @@ export default class Project {
           let participantSnapshot1 = null;
           try {
             if (eventEntity && this.access_token) {
-             
               const participantResult = await getParticipants(this.access_token, eventEntity_dn);
               if (!participantResult.success) {
                 errorWithTimestamp(`❌ 無法獲取 participant 快照`);
@@ -650,12 +648,11 @@ export default class Project {
             errorWithTimestamp(`❌ 捕獲 participant 快照失敗:`, captureError);
           }
 
-          // 🆕 使用新的佇列機制替代直接呼叫
-          // 如果專案狀態是 stop，檢查是否還有活躍通話
+          // 🆕 根據專案狀態分別處理
+          // 如果專案狀態是 stop，執行停止邏輯（而不是加入佇列）
           if (this.state === 'stop') {
-            logWithTimestamp(`專案狀態為 stop，使用佇列機制檢查是否還有活躍通話`);
-            // 使用佇列機制，合併多個快速事件
-            this.queueStateUpdate(broadcastWs, eventEntity_dn, eventEntity, true, false, participantSnapshot1);
+            logWithTimestamp(`專案狀態為 stop，執行停止狀態邏輯`);
+            await this.handleStopStateLogic(broadcastWs);
             return;
           }
 
