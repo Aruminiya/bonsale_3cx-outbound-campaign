@@ -13,6 +13,10 @@ export class TokenManager {
   private projectId: string;
   private accessToken: string | null;
 
+  // 🆕 Token 更新時間戳檢查機制
+  private lastTokenRefreshTime: number = 0; // 上次成功刷新 Token 的時間
+  private readonly MIN_TOKEN_REFRESH_INTERVAL = 30 * 60 * 1000; // 最少間隔 30 分鐘（Token 有效期為 60 分鐘）
+
   /**
    * TokenManager 構造函數
    * @param clientId 3CX 客戶端 ID
@@ -33,6 +37,32 @@ export class TokenManager {
    */
   getAccessToken(): string | null {
     return this.accessToken;
+  }
+
+  /**
+   * 獲取上次成功刷新 Token 的時間
+   * @returns number - 時間戳（毫秒）
+   */
+  getLastTokenRefreshTime(): number {
+    return this.lastTokenRefreshTime;
+  }
+
+  /**
+   * 檢查距離上次刷新 Token 是否超過最小間隔
+   * @returns boolean - true 如果超過最小間隔，false 如果在最小間隔內
+   */
+  shouldRefreshToken(): boolean {
+    const timeSinceLastRefresh = Date.now() - this.lastTokenRefreshTime;
+    return timeSinceLastRefresh >= this.MIN_TOKEN_REFRESH_INTERVAL;
+  }
+
+  /**
+   * 獲取距離上次刷新的時間（分鐘）
+   * @returns number - 時間（分鐘）
+   */
+  getTimeSinceLastRefresh(): number {
+    const timeSinceLastRefresh = Date.now() - this.lastTokenRefreshTime;
+    return Math.round(timeSinceLastRefresh / 1000 / 60);
   }
 
   /**
@@ -126,15 +156,26 @@ export class TokenManager {
         // Token 仍然有效且可用，無需刷新
         return true;
       }
-      
+
+      // 🆕 檢查距離上次刷新是否超過最小間隔（30 分鐘）
+      if (!this.shouldRefreshToken()) {
+        const timeSinceLastRefresh = this.getTimeSinceLastRefresh();
+        logWithTimestamp(
+          `⏳ Token 已在 ${timeSinceLastRefresh} 分鐘前刷新過，` +
+          `距離最小間隔 (30 分鐘) 還有 ${30 - timeSinceLastRefresh} 分鐘，` +
+          `暫不刷新，繼續使用當前 Token`
+        );
+        return true;
+      }
+
       // Token 即將過期或已過期，嘗試刷新
-      logWithTimestamp('Token 即將過期，開始刷新 access token...');
-      
+      logWithTimestamp('⏰ Token 即將過期且超過最小刷新間隔（30 分鐘），開始刷新 access token...');
+
       const newTokenResult = await get3cxToken(this.clientId, this.clientSecret);
-      
+
       if (!newTokenResult.success) {
         errorWithTimestamp('刷新 access token 失敗:', newTokenResult.error);
-        
+
         // 如果刷新失敗，檢查當前 token 是否還沒完全過期且可用
         if (!this.isTokenExpired(this.accessToken, 0)) {
           // 再次驗證 token 是否可用
@@ -146,18 +187,21 @@ export class TokenManager {
         }
         return false;
       }
-      
+
       const { access_token } = newTokenResult.data;
-      
+
       // 更新當前實例的 token
       this.accessToken = access_token;
-      
+
+      // 🆕 更新刷新時間戳
+      this.lastTokenRefreshTime = Date.now();
+
       // 更新 Redis 中的 token
       await ProjectManager.updateProjectAccessToken(this.projectId, access_token);
-      
-      logWithTimestamp('Access token 已成功刷新');
+
+      logWithTimestamp('✅ Access token 已成功刷新，時間戳已更新');
       return true;
-      
+
     } catch (error) {
       errorWithTimestamp('檢查和刷新 token 時發生錯誤:', error);
       return false;
@@ -193,26 +237,29 @@ export class TokenManager {
    */
   async forceRefreshToken(): Promise<boolean> {
     try {
-      logWithTimestamp('強制刷新 access token...');
-      
+      logWithTimestamp('🔴 強制刷新 access token...');
+
       const newTokenResult = await get3cxToken(this.clientId, this.clientSecret);
-      
+
       if (!newTokenResult.success) {
         errorWithTimestamp('強制刷新 access token 失敗:', newTokenResult.error);
         return false;
       }
-      
+
       const { access_token } = newTokenResult.data;
-      
+
       // 更新當前實例的 token
       this.accessToken = access_token;
-      
+
+      // 🆕 更新刷新時間戳
+      this.lastTokenRefreshTime = Date.now();
+
       // 更新 Redis 中的 token
       await ProjectManager.updateProjectAccessToken(this.projectId, access_token);
-      
-      logWithTimestamp('Access token 強制刷新成功');
+
+      logWithTimestamp('✅ Access token 強制刷新成功，時間戳已更新');
       return true;
-      
+
     } catch (error) {
       errorWithTimestamp('強制刷新 token 時發生錯誤:', error);
       return false;

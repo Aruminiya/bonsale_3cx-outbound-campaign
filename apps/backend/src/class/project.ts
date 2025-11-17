@@ -160,6 +160,15 @@ export default class Project {
   // 🆕 Token 刷新 Flag - 防止重複刷新 WebSocket 連接
   private isRefreshingToken: boolean = false;
 
+  // 🆕 Token 檢查時間控制 - 避免在高頻事件期間重複檢查 Token
+  private lastTokenCheckTime: number = 0; // 上次檢查 Token 的時間
+  private readonly MIN_TOKEN_CHECK_INTERVAL = 1000; // 最少間隔 1 秒
+
+  // 🆕 WebSocket 重連接狀態管理 - 加強重連接機制
+  private wsReconnectAttempts: number = 0; // 重連接嘗試計數
+  private readonly MAX_RECONNECT_ATTEMPTS = 3; // 最多重試 3 次
+  private wsReconnectBackoffMs: number = 1000; // 初始退避時間 1 秒
+
   /**
    * Project 類別構造函數
    * @param client_id 3CX 客戶端 ID
@@ -804,6 +813,19 @@ export default class Project {
         eventDns: updates.map(u => u.eventDn).join(', ')
       });
 
+      // 🆕 在批量處理前統一檢查 Token（只檢查一次）
+      const timeSinceLastTokenCheck = Date.now() - this.lastTokenCheckTime;
+      if (timeSinceLastTokenCheck >= this.MIN_TOKEN_CHECK_INTERVAL) {
+        logWithTimestamp(`🔐 批量處理前執行 Token 檢查`);
+        const tokenValid = await this.tokenManager.checkAndRefreshToken();
+        this.lastTokenCheckTime = Date.now();
+
+        if (!tokenValid) {
+          errorWithTimestamp('❌ 無法獲得有效的 Token，停止批量處理');
+          return;
+        }
+      }
+
       // 執行所有待處理的 outboundCall
       for (const update of updates) {
         logWithTimestamp(`  ├─ 處理分機 ${update.eventDn}`, {
@@ -877,13 +899,30 @@ export default class Project {
           return;
         }
 
-        // 檢測 token 是否到期並自動刷新
-        const tokenValid = await this.tokenManager.checkAndRefreshToken();
-        if (!tokenValid) {
-          const errorMsg = '無法獲得有效的 access_token，停止外撥流程';
-          await this.setError(errorMsg);
-          errorWithTimestamp(errorMsg);
-          return;
+        // 🆕 檢測 token 是否到期並自動刷新（添加時間間隔控制）
+        const timeSinceLastTokenCheck = Date.now() - this.lastTokenCheckTime;
+        let tokenValid = true;
+
+        if (timeSinceLastTokenCheck >= this.MIN_TOKEN_CHECK_INTERVAL) {
+          // 超過 1 秒的最小間隔，執行 Token 檢查
+          logWithTimestamp(
+            `⏱️ 執行 Token 檢查 (距離上次檢查: ${timeSinceLastTokenCheck}ms)`
+          );
+          tokenValid = await this.tokenManager.checkAndRefreshToken();
+          this.lastTokenCheckTime = Date.now();
+
+          if (!tokenValid) {
+            const errorMsg = '無法獲得有效的 access_token，停止外撥流程';
+            await this.setError(errorMsg);
+            errorWithTimestamp(errorMsg);
+            return;
+          }
+        } else {
+          // 在最小間隔內，跳過檢查，直接使用現有 Token
+          logWithTimestamp(
+            `⏭️ 在 Token 檢查時間間隔內 (${this.MIN_TOKEN_CHECK_INTERVAL}ms)，跳過檢查，` +
+            `距離下次檢查還有 ${this.MIN_TOKEN_CHECK_INTERVAL - timeSinceLastTokenCheck}ms`
+          );
         }
 
         // 同步更新當前實例的 token（如果 TokenManager 中的 token 被更新了）
@@ -2331,20 +2370,53 @@ export default class Project {
    */
   private async handleTokenUpdateWebSocketReconnect(broadcastWs?: WebSocketServer): Promise<void> {
     if (this.wsManager && this.wsManager.isConnected() && this.access_token) {
-      try {
-        logWithTimestamp('Token 已更新，重新建立 WebSocket 連接');
-        await this.wsManager.disconnect();
-        
-        // 重新創建 WebSocket 管理器，使用新的 token 和統一配置
-        const wsConfig = this.createWebSocketManagerConfig(broadcastWs);
-        // 更新 onOpen 回調以使用正確的上下文
-        wsConfig.handlers.onOpen = () => this.handleWebSocketInitialization(broadcastWs, '3CX WebSocket 重新連接成功（token 更新後）');
-        
-        this.wsManager = new WebSocketManager(wsConfig.connection, wsConfig.handlers);
-        await this.wsManager.connect();
-      } catch (error) {
-        errorWithTimestamp('Token 更新後重連 WebSocket 失敗:', error);
+      // 重置重連接計數和退避時間
+      this.wsReconnectAttempts = 0;
+      this.wsReconnectBackoffMs = 1000;
+
+      let attempts = 0;
+      while (attempts < this.MAX_RECONNECT_ATTEMPTS) {
+        try {
+          logWithTimestamp(
+            `🔄 Token 已更新，重新建立 WebSocket 連接 (嘗試 ${attempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})`
+          );
+
+          await this.wsManager.disconnect();
+
+          // 重新創建 WebSocket 管理器，使用新的 token 和統一配置
+          const wsConfig = this.createWebSocketManagerConfig(broadcastWs);
+          // 更新 onOpen 回調以使用正確的上下文
+          wsConfig.handlers.onOpen = () =>
+            this.handleWebSocketInitialization(
+              broadcastWs,
+              '3CX WebSocket 重新連接成功（token 更新後）'
+            );
+
+          this.wsManager = new WebSocketManager(wsConfig.connection, wsConfig.handlers);
+          await this.wsManager.connect();
+
+          logWithTimestamp('✅ WebSocket 重連接成功');
+          this.wsReconnectAttempts = 0;
+          this.wsReconnectBackoffMs = 1000;
+          return;
+        } catch (error) {
+          attempts++;
+          const delay = this.wsReconnectBackoffMs * attempts;
+
+          errorWithTimestamp(
+            `⚠️ WebSocket 重連接失敗 (${attempts}/${this.MAX_RECONNECT_ATTEMPTS})，` +
+            `${delay}ms 後重試:`,
+            error
+          );
+
+          // 等待指定時間後重試
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
       }
+
+      errorWithTimestamp(
+        `❌ WebSocket 重連接失敗，已達最大重試次數 (${this.MAX_RECONNECT_ATTEMPTS})`
+      );
     }
   }
 
