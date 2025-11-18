@@ -733,10 +733,10 @@ export default class Project {
       // 找到相同分機，更新其內容（合併狀態）
       const existingUpdate = this.pendingStateUpdate[existingUpdateIndex];
       existingUpdate.broadcastWs = broadcastWs;
-      existingUpdate.eventEntity = eventEntity || existingUpdate.eventEntity || null;
-      existingUpdate.isExecuteOutboundCalls = isExecuteOutboundCalls || existingUpdate.isExecuteOutboundCalls || false;
+      existingUpdate.eventEntity = eventEntity;
+      existingUpdate.isExecuteOutboundCalls = isExecuteOutboundCalls;
       existingUpdate.isInitCall = isInitCall;
-      existingUpdate.participantSnapshot = participantSnapshot || existingUpdate.participantSnapshot || null;
+      existingUpdate.participantSnapshot = participantSnapshot;
       existingUpdate.timestamp = now;
 
       logWithTimestamp(`✅ 狀態更新已佇列（更新現有分機 ${eventDn}）`, {
