@@ -634,7 +634,9 @@ export default class Project {
 
           // 使用佇列機制處理 case 0 事件，避免多個分機同時掛斷時重複執行
           logWithTimestamp(`佇列化 case 0 事件`);
-          this.queueStateUpdate(broadcastWs, eventEntity_dn, eventEntity, false, false, participantSnapshot0);
+          this.outboundCall(broadcastWs, eventEntity, false, false, participantSnapshot0)!.catch(error => {
+            errorWithTimestamp('case 0 觸發外撥邏輯時發生錯誤:', error);
+          });
           break;
         case 1:
           logWithTimestamp(`🟩 Case 1 觸發（通話事件變化）`, messageObject.event);
@@ -668,7 +670,9 @@ export default class Project {
           // 🆕 使用佇列機制而非直接 await outboundCall
           // 這樣可以合併多個高頻率的 case 1 事件
           logWithTimestamp(`佇列化 case 1 事件`);
-          this.queueStateUpdate(broadcastWs, eventEntity_dn, eventEntity, true, false, participantSnapshot1);
+          this.outboundCall(broadcastWs, eventEntity, true, false, participantSnapshot1)!.catch(error => {
+            errorWithTimestamp('case 1 觸發外撥邏輯時發生錯誤:', error);
+          });
 
           break;
         default:
