@@ -327,11 +327,17 @@ export default class Project {
         callRestriction
       );
 
+      // 🆕 初始化所有分機的 Mutex
+      for (const callerItem of callerData) {
+        project['processMutexPerExtension'].set(callerItem.dn, new Mutex());
+        logWithTimestamp(`✅ 為分機 ${callerItem.dn} 初始化 Mutex`);
+      }
+
       // 儲存專案到 Redis
       await ProjectManager.saveProject(project);
-      
+
       // 注意：分機狀態管理器現在在伺服器啟動時統一管理，不需要在每個專案中啟動
-      
+
       logWithTimestamp(`專案 ${projectId} 初始化完成並儲存到 Redis`);
       return project;
       
