@@ -199,7 +199,7 @@ export default class Project {
     });
 
     // 初始化 throttle outboundCall 方法 (500ms 內最多執行一次)
-    this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 500, {
+    this.throttledOutboundCall = throttle(this.outboundCall.bind(this), 0, {
       leading: false,   // 第一次不立即執行
       trailing: true  // 在等待期結束後執行
     });
